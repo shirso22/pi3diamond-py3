@@ -1,0 +1,128 @@
+import matplotlib.pyplot as plt
+
+from analysis.fitting import *
+from analysis.magnetometry import Magnetometer, TripletSpin
+from tools.data_toolbox import string_to_file
+
+DEBUG = True
+
+path = 'D:/data/LabBook/2013-02-04/cal_nv99_112_103_nozero/call_all_ch2_zero'
+suffix = '.txt'
+delimiter = ','
+# channel = 1
+nv_mask = ['nv99',  # 0 -> 111
+           'nv112',  # 1 -> -1-11
+           # u'nv101'] # 2 -> 1-1-1
+           'nv103']  # 3 -> -11-1
+
+show_cand = False
+
+# header=False
+data = np.genfromtxt(path + suffix, delimiter=delimiter, dtype=None, names=True)
+
+hams = (TripletSpin(), TripletSpin(), TripletSpin(), TripletSpin())
+magnetometer = Magnetometer(hams)
+transitions = np.zeros([len(nv_mask), 2])
+transitions_zero = np.zeros([len(nv_mask), 2])
+currents = np.array((np.arange(1.0, 3.5, 0.5)))
+c_virt = np.hstack((np.array((0.,)), currents))
+# currents = np.hstack((np.array((0.,)),currents))
+# print currents
+# b_fields = np.zeros([len(currents), 3])
+# b_est = np.zeros([len(currents), 3*4])
+# b_cand = np.zeros([len(currents), 3*4])
+# b_chisqr = np.zeros([len(currents), 4])
+b_fields = list()
+b_est = list()
+b_cand = list()
+b_chisqr = list()
+b_fields_zero = list()
+b_est_zero = list()
+b_cand_zero = list()
+b_chisqr_zero = list()
+
+# TODO: this seems to be broken
+
+for n, curr in enumerate(currents):
+    t = 0  # current counter
+    for i, d in enumerate(data):
+        if d['current'] == curr and d['nv'] in nv_mask:
+            if DEBUG: print(t)
+            transitions[t][0] = d['f1'] / 1000000.
+            transitions[t][1] = d['f2'] / 1000000.
+            t += 1
+        elif d['current'] == 0. and d['nv'] in nv_mask:
+            transitions_zero[t][0] = d['f1'] / 1000000.
+            transitions_zero[t][1] = d['f2'] / 1000000.
+            t += 1
+    if ('nan' in str(transitions)):
+        b_fields.append(np.nan)
+        b_est.append(np.nan)
+        b_cand.append(np.nan)
+        b_chisqr.append(np.nan)
+    else:
+        fields, est, cand, chisqr = magnetometer.get_field(transitions, full_output=True)
+        b_fields.append(fields)
+        b_est.append(est)
+        b_cand.append(cand)
+        b_chisqr.append(chisqr)
+        if transitions_zero.any() != 0:
+            fields, est, cand, chisqr = magnetometer.get_field(transitions_zero, full_output=True)
+            b_fields_zero.append(fields)
+            b_est_zero.append(est)
+            b_cand_zero.append(cand)
+            b_chisqr_zero.append(chisqr)
+# print '\n' + str(b_fields)
+
+# draw
+
+c = currents
+b = np.array(b_cand)
+b_best = np.array(b_fields)
+b_net = np.sqrt(np.square(b[:, :, 0]) + np.square(b[:, :, 1]) + np.square(b[:, :, 2]))
+b_net_best = np.sqrt(np.square(b_best[:, 1]) + np.square(b_best[:, 1]) + np.square(b_best[:, 2]))
+
+if show_cand:
+    for a in range(4):
+        plt.clf()
+        plt.xlabel('current [A]')
+        plt.ylabel('Field [G]')
+        plt.plot(c, b[:, a, 0], 'r^--', c, b[:, a, 1], 'b^--', c, b[:, a, 2], 'g^--', c, b_best[:], 'y*')
+        # if b[:,a,:] == b_best
+        version = a
+        plt.savefig(path + '_candidate_' + str(version) + '.png')
+
+# for i,dir in enumerate(('x', 'y', 'z')):
+#    plt.clf()
+#    plt.xlabel('current [A]')
+#    plt.ylabel('Field [G]')
+#    plt.plot(c, b[:,0,i], 'r^--', c, b[:,1,i], 'b^--', c, b[:,2,i], 'g^--', c, b[:,3,i], 'y^--', c, b_best[:,i], 'k*-')
+#    plt.savefig(path+'_'+dir+'.png')
+#    
+
+# fit best results linearily
+f = []
+string_to_file('#a,c,c_measure\n', path + '_fit' + '.txt', 'w')
+for v in range(3):
+    p = fit(c, b_best[:, v], Linear, LinearEstimator)
+    f.append(Linear(*p))
+    string = str(p[0]) + ',' + str(p[1]) + ',' + str(b_best_zero[v]) + '\n'
+    string_to_file(string, path + '_fit' + '.txt')
+
+# plot best results with all fits
+plt.clf()
+plt.xlabel('current [A]')
+plt.ylabel('Field [G]')
+plt.plot(c, b_best[:, 0], 'r^', c_virt, f[0](c_virt), 'r-',
+         c, b_best[:, 1], 'b^', c_virt, f[1](c_virt), 'b-',
+         c, b_best[:, 2], 'g^', c_virt, f[2](c_virt), 'g-',
+         c, b_net_best[:], 'y*--',
+         0, b_best_zero, 'kx')
+plt.xlim(xmin=0)
+plt.savefig(path + '_' + 'best' + '.png')
+
+# plt.clf()
+# plt.xlabel('current [A]')
+# plt.ylabel('Net Field [G]')
+# plt.plot(c, b_net[:,0], 'r^--', c, b_net[:,1], 'b^--', c, b_net[:,2], 'g^--', c, b_net[:,3], 'y^--', c, b_net_best[:], 'k*-')
+# plt.savefig(path+'_'+'net'+'.png')

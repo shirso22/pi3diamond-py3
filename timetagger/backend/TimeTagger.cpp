@@ -1,0 +1,548 @@
+/*
+    backend for TimeTagger, an OpalKelly based single photon counting library
+    Copyright (C) 2011  Markus Wick <wickmarkus@web.de>
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with this program; if not, write to the Free Software Foundation, Inc.,
+    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+#include <iostream>
+#include "okFrontPanelDLL.h"
+// PY3-PORT: boost_thread 1.47 replaced with the C++11 standard library.
+// boost/thread.hpp also pulled in <cassert> and <map> transitively;
+// the standard headers do not, so they are declared explicitly.
+#include <cassert>
+#include <map>
+#include <vector>
+#include <string>
+#include <cstring>
+#include <mutex>
+#include <thread>
+#include <chrono>
+// PY3-PORT: superseded by <chrono>.
+
+#include "TimeTagger.h"
+
+using namespace std;
+
+_Tagger* _Tagger::tagger;
+std::string _Tagger::serial;
+std::mutex _Tagger::tagger_mutex;
+
+_Tagger* _Tagger::getTagger(_Iterator *it) {
+	tagger_mutex.lock();
+	if( !tagger ) {
+		tagger = new _Tagger();
+	}
+	tagger_mutex.unlock();
+	return tagger;
+}
+
+void _Tagger::setSerial(string s) {
+	serial = s;
+}
+
+
+_Tagger::_Tagger() {
+	// begin with a empty channel list and empty dist
+	for(int i=0; i<channels; i++) {
+		chans[i] = 0;
+		for(int k=0; k<distribution; k++) {
+			distribution_counts[i][k] = 0;
+		}	
+	}
+	rollover = 0;
+	
+	// set all pointers to zero
+	xem = 0; pll = 0; iterators = 0;
+	
+	for(int i=0; i<workers; i++) {
+		worker[i] = 0;
+	}
+
+	fpga_channel_reconfig = 1;
+	fpga_connected = 0;
+	suppress_warnings = 0;
+	
+	// load FrontPanel library
+	if ( FALSE == okFrontPanelDLL_LoadLib(NULL) ) {
+		throw runtime_error("Could not load FrontPanel DLL.");
+	}
+	
+	//configureFpga();
+	//configureChannel();
+
+	start();
+}
+
+_Tagger::~_Tagger() {
+	stop();
+
+	_Tagger::tagger = 0;
+
+	if( xem )		delete xem;
+	if( pll )		delete pll;
+	if( worker )	delete [] worker;
+}
+
+_Iter* _Tagger::addIterator(_Iterator *it) {
+	if(!it)	warning(0, "Tried to add an empty Iterator");
+	
+	_Iter* i = new _Iter();
+	i->iter = it;
+	
+	convert_mutex.lock();
+	i->next = iterators;
+	iterators = i;	
+	convert_mutex.unlock();
+	
+	return i;
+}
+
+void _Tagger::registerChannel(int chan) {
+	if (chan < 0 || chan >= channels) warning( 0, "Tried to register to unknown channel ");
+	channel_mutex.lock();
+
+	if((++chans[chan]) == 1)
+		fpga_channel_reconfig = 1;
+
+	channel_mutex.unlock();
+}
+
+void _Tagger::unregisterChannel(int chan) {
+	if (chan < 0 || chan >= channels) warning(0, "Tried to unregister from unknown channel" );
+	channel_mutex.lock();
+
+	if((--chans[chan]) == 0)
+		fpga_channel_reconfig = 1;
+
+	channel_mutex.unlock();
+}
+
+void _Tagger::configureFpga () {
+	if(pll) delete pll;
+	if(xem) delete xem;
+	
+	int err = 0;
+	
+	// prepare data to be uploaded to PLL
+	pll = new okCPLL22150();
+	pll->SetVCOParameters(250, 36); // set VCO to 300MHz
+	pll->SetDiv1(pll->DivSrc_VCO, 4); // set custom clock 1 to VCO/4 = 83 MHz
+	pll->SetOutputSource(0,pll->ClkSrc_Div1ByN); 
+    pll->SetOutputEnable(0, true); // enable the clocks
+	pll->SetOutputSource(2,pll->ClkSrc_Div1By2); // set PLL clk2 to Div1By2 = 200 MHz --> "clk"
+	pll->SetOutputEnable(2, true); // enable the clocks
+
+	// configure fpga
+	xem = new okCFrontPanel();
+	// open USB connection
+	if ((err = xem->OpenBySerial(serial.c_str())) && !suppress_warnings) {
+		std::cout << "Opening of USB connection failed" << std::endl;
+	}
+
+	// upload PLL configuration
+	if (!err && (err = xem->SetPLL22150Configuration(*pll))) {
+		std::cout << "Uploading PLL configuration failed" << std::endl;
+	}
+
+	//upload design to FPGA
+	if (!err && (err = xem->ConfigureFPGA(bitfilename))) {
+		std::cout << "Uploading FPGA configuration failed" << std::endl;
+	}
+	
+	// set programmable empty threshold of fifo
+	if(!err && (err = xem->SetWireInValue(0x01, blocksize/2))) {
+		std::cout << "Uploading empty threshold faild" << std::endl;
+	}
+	
+	if(!err) {
+		xem->UpdateWireIns();
+		xem->SetTimeout(1000); // set timeout to 1s
+	}
+	
+	// reset
+	if(!err && (err = xem->SetWireInValue(0x02, 1))) {
+		std::cout << "setting reset faild" << std::endl;
+	}
+	if(!err) {
+		xem->UpdateWireIns();
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	if(!err && (err = xem->SetWireInValue(0x02, 0))) {
+		std::cout << "unsetting reset faild" << std::endl;
+	}
+	if(!err) {
+		xem->UpdateWireIns();
+	}
+	
+	fpga_connected = !err;
+	suppress_warnings = !fpga_connected;
+	fpga_channel_reconfig = 1;
+}
+
+void _Tagger::configureChannel() {
+	channel_mutex.lock();
+	
+	if(fpga_channel_reconfig && fpga_connected) {
+		
+		int channelconfig = 0;
+		for(int i=0; i<channels; i++) {
+			channelconfig |= (chans[i]>0) << i;
+		}
+		
+		if(xem->SetWireInValue(0x02, channelconfig))
+			fpga_connected = 0;
+		else
+			xem->UpdateWireIns();
+		
+		fpga_channel_reconfig = 0;
+	}
+	channel_mutex.unlock();
+	
+}
+
+void _Tagger::start() {
+	for(int i=0; i<workers; i++) {
+		worker[i] = new _Worker(this);
+	}
+}
+
+void _Tagger::stop() {
+	//terminate the worker
+	for(int i=0; i<workers; i++) {
+		worker[i]->terminate();
+	}
+	for(int i=0; i<workers; i++) {
+		delete worker[i];
+		worker[i] = 0;
+	}
+}
+
+void _Tagger::read(_Worker* w) {
+	
+	while(!fpga_connected) {
+		configureFpga();
+		if(!fpga_connected) {
+			std::this_thread::sleep_for(std::chrono::seconds(1));
+		}
+	}
+	
+	// Channel reconfig
+	configureChannel();
+
+	int len = xem->ReadFromBlockPipeOut(0xa0, blocksize, ibuffersize, w->ibuffer);
+	
+	w->ifull_usage = len;
+		
+	if (len<0) {
+		std::cout << "len = " << len << std::endl;
+		std::cout << "PipeBackend: Pipe transfer failed" << std::endl;
+		fpga_connected = 0;
+		
+		// send an overflow
+		w->ifull_usage = 4;
+		w->ibuffer[0] = 0;
+		w->ibuffer[1] = 0x40;
+		w->ibuffer[2] = 0;
+		w->ibuffer[3] = 0;
+	} 
+}
+
+void _Tagger::convert(_Worker *w) {
+	
+	update_distribution();
+	
+	w->obuffer_usage = 0;
+	
+	for (int pos = 0; pos < w->ifull_usage && w->obuffer_usage < obuffersize; pos += bytes_per_word) {
+				
+		long long time = (((long long)w->ibuffer[pos+0] << 8) | ((long long)w->ibuffer[pos+3] << 0)) * picosecounds;
+		int dist = w->ibuffer[pos+2];
+		int chan = w->ibuffer[pos+1] & 0x0F;
+		bool over = w->ibuffer[pos+1] & 0x80;
+		bool overflow = w->ibuffer[pos+1] & 0x40;
+		bool edge = w->ibuffer[pos+1] & 0x20;
+		/*
+		std::cout << "Rollover: " << over << std::endl;	
+		std::cout << "Overflow: " << overflow << std::endl;	
+		std::cout << "Edge"   << edge << std::endl;
+		std::cout << "Time: " << time << std::endl;
+		std::cout << "Dist: " << dist << std::endl;
+		std::cout << "Chan: " << chan << std::endl << std::endl;				
+		*/
+		
+		assert(time < picosecounds<<16 && time >= 0);
+		assert(chan >= 0 && chan < channels);
+		assert(dist < distribution && dist >= 0);
+		
+		long long time_dist = distribution_ps[chan][dist];
+		
+		assert(time_dist < picosecounds && time_dist >= 0);
+		
+		// rollover
+		if(over) {
+			rollover += picosecounds<<16;
+		// overflow
+		} else if(overflow) {
+			if(w->obuffer_usage) w->obuffer_usage--;
+			
+			w->obuffer[w->obuffer_usage].chan = -1;
+			w->obuffer[w->obuffer_usage].time = rollover + time;
+			w->obuffer[w->obuffer_usage].overflow = 1;
+			w->obuffer_usage++;
+			
+			rollover = 0;
+			
+		// data
+		} else if(edge) {
+			distribution_counts[chan][dist]++;
+			
+			w->obuffer[w->obuffer_usage].chan = chan;
+			w->obuffer[w->obuffer_usage].time = rollover + time + time_dist;
+			w->obuffer[w->obuffer_usage].overflow = 0;
+			
+			// sort tags, dirty workaround
+			if(w->obuffer_usage && w->obuffer[w->obuffer_usage-1].chan >= 0 && w->obuffer[w->obuffer_usage-1].time > w->obuffer[w->obuffer_usage].time) {
+				Tag tmp							= w->obuffer[w->obuffer_usage-1];
+				w->obuffer[w->obuffer_usage-1]	= w->obuffer[w->obuffer_usage];
+				w->obuffer[w->obuffer_usage]		= tmp;
+			}
+
+			w->obuffer_usage++;
+		}
+	}
+	w->time = rollover;	
+}
+
+void _Tagger::getDistributionCount(int c, double **ARGOUTVIEWM_ARRAY1, int *DIM1) {
+	long long sum = 0;
+	
+	tagger->convert_mutex.lock();
+	
+	for(int i=0; i<distribution; i++) {
+		sum += tagger->distribution_counts[c][i];
+	}
+	
+	*ARGOUTVIEWM_ARRAY1 = new double[distribution];
+	*DIM1 = distribution;
+	
+	for(int i=0; i<distribution && *ARGOUTVIEWM_ARRAY1; i++) {
+		(*ARGOUTVIEWM_ARRAY1)[i] = double(tagger->distribution_counts[c][i]) / double(sum);
+	}
+	tagger->convert_mutex.unlock();
+}
+
+void _Tagger::iter(_Worker* w) {
+
+	
+	// Stage one: read
+	read_mutex.lock();
+	read(w);
+	
+	// Stage two: convert
+	convert_mutex.lock();
+	read_mutex.unlock();
+	convert(w);
+	
+	// Stage three: iterators
+	std::mutex* mutex = &convert_mutex;
+	_Iter** next = &iterators;
+	
+	while(*next) {
+		(*next)->getMutex()->lock();
+		_Iter* tmp = (*next);
+		
+		if(!tmp->iter) {
+			*next = tmp->next;
+			tmp->getMutex()->unlock();
+			delete tmp;
+		} else {
+			mutex->unlock();
+			mutex = tmp->getMutex();
+			
+			tmp->iter->_next(w);
+			
+			next = &tmp->next;
+		}
+	}
+	
+	// after Stage three, unlock the mutex
+	mutex->unlock();
+}
+
+/**
+ * lvl0: Fehlerhafte Aufrufe
+ * lvl1: Fehler in der Komunikation mit dem FPGA
+ * lvl2: Fehler in der Speicherverwaltung
+ * lvl3: Fehler im Buffer
+ */
+void _Tagger::warning(int lvl, const char* msg) {
+	warning_mutex.lock();
+	switch (lvl) {
+	case 0:
+	case 1:
+	case 2:
+	case 3:cout << msg << endl; break;
+	default: break;
+	}
+	warning_mutex.unlock();
+}
+
+void _Tagger::update_distribution() {
+	for(int c=0; c<channels; c++) {
+		long long d[distribution];
+		long long sum = 0;
+		
+		d[0] = 0;
+		for(int i=1; i<distribution; i++) {
+			d[i] = d[i-1]+distribution_counts[c][i-1];
+		}
+		sum = d[distribution-1] + distribution_counts[c][distribution-1];
+		
+		if(sum > 1000000) {
+			for(int i=0; i<distribution; i++)
+				distribution_counts[c][i] *= 0.9;
+		}
+		
+		for(int i=0; i<distribution; i++) {
+			if (sum > 100000) {
+				distribution_ps[c][i] = double(picosecounds) * double(d[i]+distribution_counts[c][i]/2) / double(sum);
+			} else {
+				distribution_ps[c][i] = ((i)*picosecounds)/distribution;
+			}
+		}
+	}
+}
+
+int _Tagger::setFilter(bool state) {
+    read_mutex.lock();
+    int p = 0;
+    if (state)
+        p = 1;
+    //bool err = (xem->SetWireInValue(0x05, p)!=0);
+    int res = xem->SetWireInValue(0x05, p);
+    xem->UpdateWireIns();
+    read_mutex.unlock();
+    return res;
+}
+
+_Worker::_Worker(_Tagger* t) {
+	run = 1;
+	ifull_usage = 0;
+	obuffer_usage = 0;
+	time = 0;
+	tagger = t;
+	
+	thread = std::thread (&_Worker::work, this);
+}
+
+_Worker::~_Worker() {
+	run = 0;
+	thread.join();
+}
+
+void _Worker::work() {
+	// PY3-PORT: an exception escaping a thread function calls std::terminate and
+	// kills the interpreter with no traceback -- and the %exception block in
+	// TimeTagger.i CANNOT catch it, because a worker thread never crosses a SWIG
+	// wrapper. Caught here instead: the worker stops and says why, leaving the
+	// process alive so the measurement can be stopped from the GUI and the laser
+	// and microwave turned off. A stopped worker returns no tags, so if an
+	// acquisition goes quiet, read stderr.
+	try {
+		while(run)
+			tagger->iter(this);
+	} catch (const std::exception &e) {
+		run = false;
+		fprintf(stderr, "TimeTagger worker thread stopped: %s\n", e.what());
+	} catch (...) {
+		run = false;
+		fprintf(stderr, "TimeTagger worker thread stopped: unknown C++ exception\n");
+	}
+}
+
+
+_Iterator::_Iterator() {
+	running = 0;
+
+	tagger = _Tagger::getTagger(this);
+
+	for(int i=0; i<channels; i++)
+		chans[i] = 0;
+	
+	iter = tagger->addIterator(this);
+}
+
+_Iterator::~_Iterator() {
+	stop();
+	
+	for(int i=0; i<channels; i++)
+		unregisterChannel(i);
+	
+	lock();
+	iter->iter = 0;
+	unlock();
+}
+
+void _Iterator::_next(_Worker* w) {
+	if(running)
+		next(w->obuffer, w->obuffer_usage, w->time);
+}
+
+void _Iterator::registerChannel(int chan) {
+	if(!chans[chan]) {
+		chans[chan] = 1;
+		tagger->registerChannel(chan);
+	}
+}
+
+void _Iterator::unregisterChannel(int chan) {
+	if(chans[chan]) {
+		chans[chan] = 0;
+		tagger->unregisterChannel(chan);
+	}
+}
+
+void _Iterator::start() {
+	lock();
+	running = true;
+	unlock();
+}
+
+void _Iterator::stop() {
+	lock();
+	running = false;
+	unlock();
+}
+
+void _Iterator::lock() {
+	iter->getMutex()->lock();
+}
+
+void _Iterator::unlock() {
+	iter->getMutex()->unlock();
+}
+
+
+void _Tagger::SetWireIn(int addr, int value){
+		int err=0;
+		
+		if(!err && (err = tagger->xem->SetWireInValue(addr, value))) {
+			std::cout << "Uploading empty threshold failed" << std::endl;
+		}
+	
+		if(!err) {
+			tagger->xem->UpdateWireIns();
+		}
+}

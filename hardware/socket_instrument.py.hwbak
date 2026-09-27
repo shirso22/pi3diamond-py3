@@ -1,0 +1,38 @@
+import socket
+import time
+
+
+# helper class to represent a visa instrument via a socket
+class SocketInstrument():
+    """Imitate a visa instrument via raw socket."""
+
+    def __init__(self, device, chunk_size=2048, term_chars='\r\n'):
+        host, port = device.split(':')
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((host, int(port)))
+        self.sock = sock
+        self.chunk_size = chunk_size
+        self.term_chars = term_chars
+
+    def write(self, cmd):
+        """Sends a command over the socket"""
+        cmd_string = cmd + '\n'
+        sent = self.sock.sendall(cmd_string)
+        if sent != None:
+            raise RuntimeError('Transmission failed')
+        # time.sleep(.1) #add a timeout for the transfer to take place. Should be replaced by a proper error handling at some point
+
+    def ask(self, question, timeout=1.0, poll_time=0.02):
+        """sends the question and receives the answer"""
+        self.write(question)
+        answer = ''
+        start_time = time.time()
+        while not self.term_chars in answer:
+            answer += self.sock.recv(self.chunk_size)
+            time.sleep(poll_time)
+            if time.time() - start_time > timeout:
+                raise RuntimeError("Timeout occurred.")
+        return answer[:-len(self.term_chars)]
+
+    def close(self):
+        self.sock.close()

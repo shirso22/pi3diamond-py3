@@ -1,0 +1,471 @@
+# PY3-PORT: pickle.load(..., encoding='latin1') throughout this file.
+# Python 2 pickled `str` as bytes; without an explicit codec every string
+# in a historical .pys file comes back as bytes, or raises
+# UnicodeDecodeError. latin-1 round-trips bytes 0-255 one-to-one, so numpy
+# arrays and ASCII dict keys both survive. No-op for Python 3 pickles.
+"""
+Determination of magnetic field from the Zeeman shift of several NVs
+
+Problem statement
+
+Suppose we have a single crystalline bulk diamond. Suppose the crystal
+is placed in a homogeneous magnetic field B. NV centers can have 4 possible
+orientations with respect to the crystal lattice. We consider N single NVs
+who's orientations are unknown. Using ODMR measurements we can determine
+the ESR transitions of each NV. 
+
+    v1_i=e1_i-e0_i
+    v2_i=e2_i-e0_i
+
+From the spin Hamiltonian model we can compute the energies e0_i, e1_i, e2_i.
+We assume the energies are ordered with increasing energy. Then we can directly relate
+measured energies to calculated energies.
+
+We will use a brute force method to find the magnetic field. To this end, we compute
+the transition frequencies v1 and v2 for a predetermined
+set of magnetic fields. For numerical efficiency, we will pre-compute the ESR transitions
+and store the data on the disc.
+
+The search will typically be performed in three steps:
+
+1. coarse brute force search using pre-computed ESR data.
+2. fine brute force search using on-demand calculation on a fine mesh
+3. non-linear least-square fitting
+
+Helmut Fedder <helmut.fedder@gmail.com>
+
+first version: 31 May 2012
+"""
+
+import pickle
+import sys
+
+import numpy as np
+import scipy.optimize
+import scipy.special
+from traits.api import File, Button
+from traitsui.api import View, Item, HGroup, VGroup, Menu, MenuBar, Action
+
+from tools.emod import Job
+from tools.utility import GetSetItemsMixin, GetSetItemsHandler
+
+
+class TripletSpin():
+    """Triplet state Hamiltonian with D, E and Zeeman shift."""
+
+    def __init__(self, D=2870.6, E=0.0, g=2.0028 * 9.27400915 / 6.626068):
+        self.D = D
+        self.E = E
+        self.g = g
+
+    def energy_levels(self, B):
+        """Calculate the energy levels for given magnetic field."""
+        D = self.D
+        E = self.E
+        g = self.g
+        H = np.array(((0., 1j * g * B[1], -1j * g * B[0]),
+                      (-1j * g * B[1], D - E, 1j * g * B[2]),
+                      (1j * g * B[0], -1j * g * B[2], D + E)))
+        e = np.linalg.eigvalsh(H)
+        e.sort()
+        return e
+
+    def transitions(self, B):
+        """
+        Calculate the ESR transitions for given external field.
+        Note that this method of sorting the energies fails above the LAC.
+        """
+        e = self.energy_levels(B)
+        return np.array((e[1] - e[0], e[2] - e[0]))
+
+
+class MagCoilCalibration_BField(Job, GetSetItemsMixin):
+    """ """
+    # Gui
+    table_file = File()
+    path_data_1 = File()
+    path_data_2 = File()
+    path_data_3 = File()
+    path_data_4 = File()
+    path_save = File()
+
+    calc_button = Button(label='start', desc='Calculates the b-field calculation.')
+    gentable_button = Button(label='generate table',
+                             desc='Generate a table in the range -50 to 50 Gauss. The path for table file is used.')
+
+    def _calc_button_fired(self):
+        """React to calc button."""
+        self._run()
+
+    def _gentable_button_button_fired(self):
+        """React to gentable_button button."""
+        self.generate_table_now(self.table_file)
+
+    traits_view = View(VGroup(VGroup(Item('table_file'),
+                                     Item('path_data_1'),
+                                     Item('path_data_2'),
+                                     Item('path_data_3'),
+                                     Item('path_data_4'),
+                                     Item('path_save'),
+                                     ),
+                              HGroup(Item('gentable_button', show_label=False),
+                                     Item('calc_button', show_label=False),
+                                     Item('state', style='readonly'),
+                                     ),
+                              ),
+                       menubar=MenuBar(Menu(Action(action='save', name='Save (.pyd or .pys)'),
+                                            Action(action='load', name='Load (.pyd or .pys)'),
+                                            Action(action='_on_close', name='Quit'),
+                                            name='File'), ),
+                       title='Magnetic field calibration b-field calculation', buttons=[], resizable=True,
+                       handler=GetSetItemsHandler
+                       )
+
+    get_set_items = ['table_file', 'path_data_1', 'path_data_2', 'path_data_3', 'path_data_4', 'path_save', '__doc__']
+
+    def _run(self):
+        """ """
+        try:
+            self.state = 'run'
+
+            if self.table_file == '':
+                raise ValueError('Filename missing. Please specify a filename and try again.')
+            if self.path_data_1 == '':
+                raise ValueError('Filename missing. Please specify a filename and try again.')
+            if self.path_data_2 == '':
+                raise ValueError('Filename missing. Please specify a filename and try again.')
+            if self.path_data_3 == '':
+                raise ValueError('Filename missing. Please specify a filename and try again.')
+            if self.path_data_4 == '':
+                raise ValueError('Filename missing. Please specify a filename and try again.')
+            if self.path_save == '':
+                raise ValueError('Filename missing. Please specify a filename and try again.')
+
+            spin_models, rotations, bx, by, bz, table = self.load_table_file()
+            data_array_all = self.read_data()
+            self.calc_bfield(data_array_all, spin_models, rotations, bx, by, bz, table)
+
+            self.state = 'done'
+        except:
+            logging.getLogger().exception('Error in MagCoilCalibration_BField.')
+            self.state = 'error'
+
+            # helper functions
+
+    def string_to_file(self, datastring, path):
+        """writes datastring to file"""
+        try:
+            f = open(path, 'a')
+            try:
+                f.write(datastring)
+            finally:
+                f.close()
+        except IOError:
+            print('Error exporting data')
+            return False
+        return True
+
+    def list_to_file(self, list, path):
+        """writes simple list to file"""
+        datastring = ''
+        for m in range(len(list)):
+            datastring = datastring + ', ' + str(list[m])
+        datastring = datastring.strip(', ') + '\n'
+        self.string_to_file(datastring, path)
+
+    # Run methods
+    def load_table_file(self):
+        """load pre-computed data"""
+        table_file = self.table_file
+        if not 'table' in dir():
+            print('loading table file...')
+            fil = open(table_file, 'rb')
+            spin_models, rotations, bx, by, bz, table = pickle.load(fil, encoding='latin1')
+            fil.close()
+        return spin_models, rotations, bx, by, bz, table
+
+    def read_data(self):
+        """read in data with the format used from MagCoilCalibration"""
+        # get number of data points
+        data_file = open(self.path_data_1)
+        number_data_lines = len(data_file.readlines())
+        # open files and read data
+        data_array_all = np.zeros((4, number_data_lines, 2))
+        j = -1
+        for k in [self.path_data_1, self.path_data_2, self.path_data_3, self.path_data_4]:
+            j += 1
+            data_file = open(k)
+            data_lines = data_file.readlines()
+            data_array = np.zeros((number_data_lines, 2))
+            for p in range(number_data_lines):
+                data_list = list(eval(data_lines[p]))
+                data_array[p] = data_list
+            data_array_all[j] = data_array
+        return data_array_all
+
+    def calc_bfield(self, data_array_all, spin_models, rotations, bx, by, bz, table):
+        """calculation of the bfield vector components using the methods of bfield.py"""
+        # get number of data points
+        data_file = open(self.path_data_1)
+        number_data_lines = len(data_file.readlines())
+        # calculate bfield vector
+        b_vec = np.zeros((number_data_lines, 4))
+        for k in range(number_data_lines):
+            splittings = np.array((data_array_all[0][k][1], data_array_all[1][k][1], data_array_all[2][k][1],
+                                   data_array_all[3][k][1])) * 10 ** (-6)
+            transitions = np.vstack((np.zeros_like(splittings), splittings)).transpose()
+            b, s_b, chisqr, q = self.find_field(spin_models, rotations, orientations, bx, by, bz, table, transitions,
+                                                method='splittings')
+            [x, y, z] = b[2]
+            b_vec[k][0] = data_array_all[0][k][0]
+            b_vec[k][1] = x
+            b_vec[k][2] = y
+            b_vec[k][3] = z
+        # write result to file
+        for n in range(number_data_lines):
+            self.list_to_file(b_vec[n], self.path_save)
+
+    # transformations to NV coordinate systems
+    def axis_angle(self, n0, n1):
+        """Compute the rotation axis and angle to transform n0 to n1.
+        n0 and n1 are of length 1."""
+        n = np.cross(n0, n1)
+        norm_n = np.linalg.norm(n)
+        if norm_n == 0.:
+            n = np.array((0., 0., 1.))
+            phi = 0.0
+        else:
+            n = n / norm_n
+            phi = np.arccos(np.dot(n0, n1))
+        return n, phi
+
+    def rotation_matrix(self, n, phi):
+        """Compute the rotation axis from an axis and angle."""
+        x, y, z = n
+        c = np.cos(phi)
+        s = np.sin(phi)
+        t = 1 - c
+        R = np.array(((t * x * x + c, t * x * y - z * s, t * x * z + y * s),
+                      (t * y * x + z * s, t * y * y + c, t * y * z - x * s),
+                      (t * z * x - y * s, t * z * y + x * s, t * z * z + c)))
+        return R
+
+    def v1v2_table(self, nvs, rotations, bx, by, bz):
+        table = np.empty((len(bx), len(by), len(bz), len(nvs), 2))
+        for i, bxi in enumerate(bx):
+            sys.stdout.write('\r%i%%' % int(round(i / float(len(bx)) * 100)))
+            sys.stdout.flush()
+            for j, byj in enumerate(by):
+                for k, bzk in enumerate(bz):
+                    b = np.array((bxi, byj, bzk))
+                    for m in range(4):
+                        table[i, j, k, m] = nvs[m].transitions(np.dot(rotations[m], b))
+            sys.stdout.write('\r')
+            sys.stdout.flush()
+        return table
+
+    def landscape_transitions(self, orientations, transitions, table):
+        return np.sum(np.sum((table[:, :, :, orientations, :] - transitions) ** 2, axis=-1), axis=-1)
+
+    def landscape_splittings(self, orientations, splittings, table):
+        return np.sum((table[:, :, :, orientations, 1] - table[:, :, :, orientations, 0] - splittings) ** 2, axis=-1)
+
+    def index_minimum(self, landscape):
+        i_flat = landscape.argmin()
+        return np.unravel_index(i_flat, landscape.shape)
+
+    def chi_transitions(self, nvs, rotations, orientations, transitions, s_transitions=None):
+        """Chi for transition frequencies"""
+        if s_transitions is None:
+            def chi(b):
+                theo = np.empty_like(transitions)
+                for i in range(len(transitions)):
+                    theo[i] = nvs[i].transitions(np.dot(rotations[orientations[i]], b))
+                return (theo - transitions).flatten()
+        else:
+            def chi(b):
+                theo = np.empty_like(transitions)
+                for i in range(len(transitions)):
+                    theo[i] = nvs[i].transitions(np.dot(rotations[orientations[i]], b))
+                return ((theo - transitions) / s_transitions).flatten()
+        return chi
+
+    def chi_splittings(self, nvs, rotations, orientations, splittings, s_splittings=None):
+        """Chi for splittings."""
+        if s_splittings is None:
+            def chi(b):
+                theo = np.empty((len(splittings), 2))
+                for i in range(len(splittings)):
+                    theo[i] = nvs[i].transitions(np.dot(rotations[orientations[i]], b))
+                return theo[:, 1] - theo[:, 0] - splittings
+        else:
+            def chi(b):
+                theo = np.empty((len(splittings), 2))
+                for i in range(len(splittings)):
+                    theo[i] = nvs[i].transitions(np.dot(rotations[orientations[i]], b))
+                return (theo[:, 1] - theo[:, 0] - splittings) / s_splittings
+        return chi
+
+    def generate_table(self, spin_models, rotations, b_range, b_delta, table_file):
+        # magnetic field range
+        b = np.arange(-b_range, b_range, b_delta)
+        table = self.v1v2_table(spin_models, rotations, b, b, b)
+        fil = open(table_file, 'wb')
+        pickle.dump((spin_models, rotations, b, b, b, table), fil, 1)
+        fil.close()
+
+    def load_table(self, filename):
+        fil = open(table_file)
+        spin_models, rotations, bx, by, bz, table = pickle.load(fil, encoding='latin1')
+        fil.close()
+        return spin_models, rotations, bx, by, bz, table
+
+    def find_field(self, spin_models, rotations, orientations, bx, by, bz, table, transitions, s_transitions=None,
+                   method='transitions'):
+        """
+        Try to find the magnetic field from given ESR frequencies or alternatively ESR splittings
+        of 3 or four different NVs.
+        
+        Input:
+            spin_models:    3- or 4-tuple of TripletSpin. Here you can pass
+                            D,E, and g-factor for the individual NVs
+            orientations:   list of orientations of the NVs ( 0-->(1,1,1), 1-->(-1,-1,1), 2-->(1,-1,-1), 3-->(-1,1,-1) )
+            bx, by, bz:     The x,y,z magnetic field mesh over which the table was computed
+            table:          table of pre-computed ESR transitions corresponding to the spi-models
+                            and magnetic field meshes. 
+            transitions:    (3,2) or (4,2) array containing the ESR transition frequencies
+                            of three or four different NVs.
+            s_transitions:  standard deviations of the transitions frequencies or None
+            method:         Determines the parameter used for the fitting. Can be either 'transitions'
+                            or 'splittings'. In the prior case, the transitions are fitted
+                            in the latter case, the splittings, i.e. the difference between
+                            the transitions are fitted.
+                            
+        Returns:
+            b :             3-tuple of vectors: b-field vectors after the three stages
+                                stage one: brute force using lookup table
+                                stage two: refined brute force
+                                stage three: nonlinear least-square minimization
+            s_b:            standard deviation of b-field from least-square minimization (stage three)
+            chisqr:         3-tuple: chisqr deviations after the three stages
+            q:              quality of fit from least-square minimization (only meaningful if
+                            standard deviations of the transition frequencies were provided)
+        """
+
+        if method == 'transitions':
+            # stage one: lookup
+            i, j, k = self.index_minimum(landscape_transitions(orientations, transitions, table))
+            b1 = np.array((bx[i], by[j], bz[k]))
+
+            # stage two: refined brute force
+            bxf = np.linspace(bx[i - 1], bx[i + 1], 11)
+            byf = np.linspace(by[j - 1], by[j + 1], 11)
+            bzf = np.linspace(bz[k - 1], bz[k + 1], 11)
+
+            fine_table = self.v1v2_table(spin_models, rotations, bxf, byf, bzf)
+            i, j, k = self.index_minimum(landscape_transitions(orientations, transitions, fine_table))
+            b2 = np.array((bxf[i], byf[j], bzf[k]))
+
+            # stage three: nonlinear least square minimization
+            result = scipy.optimize.leastsq(
+                chi_transitions(spin_models, rotations, orientations, transitions, s_transitions), b2, full_output=True)
+        elif method == 'splittings':
+            splittings = transitions[:, 1] - transitions[:, 0]
+            if s_transitions is not None:
+                s_splittings = (s_transitions[:, 1] ** 2 + s_transitions[:, 0] ** 2) ** 0.5
+            else:
+                s_splittings = None
+
+            # stage one: lookup
+            i, j, k = self.index_minimum(landscape_splittings(orientations, splittings, table))
+            b1 = np.array((bx[i], by[j], bz[k]))
+
+            # stage two: refined brute force
+            bxf = np.linspace(bx[i - 1], bx[i + 1], 11)
+            byf = np.linspace(by[j - 1], by[j + 1], 11)
+            bzf = np.linspace(bz[k - 1], bz[k + 1], 11)
+
+            fine_table = self.v1v2_table(spin_models, rotations, bxf, byf, bzf)
+            i, j, k = self.index_minimum(landscape_splittings(orientations, splittings, fine_table))
+            b2 = np.array((bxf[i], byf[j], bzf[k]))
+
+            # stage three: nonlinear least square minimization
+            result = scipy.optimize.leastsq(chi_splittings(spin_models, rotations, orientations, splittings), b2,
+                                            full_output=True)
+
+        # resulting b
+        b3 = result[0]
+
+        # error of b
+        s_b3 = np.diag(result[1]) ** 0.5
+
+        # goodness of fit analysis
+        chi0 = result[2]['fvec']
+        chisqr0 = np.sum(chi0 ** 2)
+        nu = 2 * len(transitions) - 3
+
+        # quality of the fit
+        q = scipy.special.gammaincc(0.5 * nu, 0.5 * chisqr0)
+
+        if method == 'transitions':
+            chisqr1 = np.sum(chi_transitions(spin_models, rotations, orientations, transitions)(b1) ** 2)
+            chisqr2 = np.sum(chi_transitions(spin_models, rotations, orientations, transitions)(b2) ** 2)
+            chisqr3 = np.sum(chi_transitions(spin_models, rotations, orientations, transitions)(b3) ** 2)
+        elif method == 'splittings':
+            chisqr1 = np.sum(chi_splittings(spin_models, rotations, orientations, splittings)(b1) ** 2)
+            chisqr2 = np.sum(chi_splittings(spin_models, rotations, orientations, splittings)(b2) ** 2)
+            chisqr3 = np.sum(chi_splittings(spin_models, rotations, orientations, splittings)(b3) ** 2)
+
+        return (b1, b2, b3), s_b3, (chisqr1, chisqr2, chisqr3), q
+
+    def generate_table_now(self, path):
+        """use NV's with standard parameters D=2870.6 MHz, E=0.0 MHz, g=2.0028"""
+        # here you can pass individual parameters for each of the NVs
+        nvs = (TripletSpin(), TripletSpin(), TripletSpin(), TripletSpin())
+        # NV orientations
+        nv_axis = np.array(((1, 1, 1), (-1, -1, 1), (1, -1, -1), (-1, 1, -1))) / 3 ** 0.5
+        n0 = np.array((0, 0, 1))
+        rotations = np.empty((4, 3, 3))
+        for i, n in enumerate(nv_axis):
+            nr, phi = axis_angle(n, n0)
+            rotations[i] = self.rotation_matrix(nr, phi)
+        # generate table with magnetic field in the range -200 to 200 Gauss for bx, by, bz 
+        self.generate_table(nvs, rotations, 200., 2., path)
+
+
+if __name__ == '__main__':
+    # Calculation for a set of given splittings
+    """
+    #load pre-computed data
+    #table_file='table_200_4_111.pys'
+    #table_file='table_200.pys'
+    table_file='table_50.pys'
+    if not 'table' in dir():
+        print 'loading table file...'
+        fil = open(table_file,'rb')
+        spin_models, rotations, bx, by, bz, table = cPickle.load(fil)
+        fil.close()
+
+    #normally we have as experimental data the ESR resonance lines. in this case, we have only the splittings and compute 'fake' transition frequencies
+    #splittings = np.array((39.806, 10.974, 14.303, 52.830))
+    #splittings = np.array((58.542, 17.495, 23.013, 18.001))
+    #splittings = np.array((41.055, 54.013, 27.010, 13.533))
+    #splittings = np.array((0, 6.459, 54.250, 47.597))
+    splittings = np.array((12.840, 34.773, 5.279, 52.528))
+    
+    transitions = np.vstack((np.zeros_like(splittings), splittings)).transpose()
+    orientations = [0,1,2,3]
+
+    b, s_b, chisqr, q = find_field(spin_models,rotations,orientations,bx,by,bz,table,transitions,method='splittings')
+
+    [x,y,z] = b[2]
+    theta = np.arccos(z/np.linalg.norm(b[2]))
+    phi = np.arctan2(y,x)
+    theta = np.degrees(theta)
+    phi = np.degrees(phi)
+    
+    print b[2]
+    print np.linalg.norm(b[2])
+    print theta
+    print phi
+    """

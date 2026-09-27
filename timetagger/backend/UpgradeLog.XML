@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?><?xml-stylesheet type='text/xsl' href='_UpgradeReport_Files/UpgradeReport.xslt'?>
+<UpgradeLog>
+    <Properties>
+        <Property Name="Solution" Value="backend">
+        </Property>
+        <Property Name="Projektmappendatei" Value="D:\software\pi3diamond.fpga\timetagger_fazhan\backend\backend.sln">
+        </Property>
+        <Property Name="Benutzeroptionendatei"
+                  Value="D:\software\pi3diamond.fpga\timetagger_fazhan\backend\backend.suo">
+        </Property>
+        <Property Name="Date" Value="Wednesday, November 16, 2011">
+        </Property>
+        <Property Name="Time" Value="14:03 PM">
+        </Property>
+    </Properties>
+    <Event ErrorLevel="0" Project="" Source="backend.sln"
+           Description="Datei wurde erfolgreich als &quot;D:\software\pi3diamond.fpga\timetagger_fazhan\backend\backend.sln.old&quot; gesichert">
+    </Event>
+    <Event ErrorLevel="0" Project="" Source="backend.suo"
+           Description="Datei wurde erfolgreich als &quot;D:\software\pi3diamond.fpga\timetagger_fazhan\backend\backend.suo.old&quot; gesichert">
+    </Event>
+    <Event ErrorLevel="0" Project="backend" Source="backend\backend.vcproj"
+           Description="Converting project file 'D:\software\pi3diamond.fpga\timetagger_fazhan\backend\backend\backend.vcproj'.">
+    </Event>
+    <Event ErrorLevel="1" Project="backend" Source="backend\backend.vcproj"
+           Description="This application has been updated to include settings related to the User Account Control (UAC) feature of Windows Vista. By default, when run on Windows Vista with UAC enabled, this application is marked to run with the same privileges as the process that launched it. This marking also disables the application from running with virtualization. You can change UAC related settings from the Property Pages of the project.">
+    </Event>
+    <Event ErrorLevel="1" Project="backend" Source="backend\backend.vcproj"
+           Description="VCWebServiceProxyGeneratorTool is no longer supported. The tool has been removed from your project settings.">
+    </Event>
+    <Event ErrorLevel="1" Project="backend" Source="backend\backend.vcproj"
+           Description="Attribute 'Detect64BitPortabilityProblems' of 'VCCLCompilerTool' is not supported in this version and has been removed during conversion.">
+    </Event>
+    <Event ErrorLevel="0" Project="backend" Source="backend\backend.vcproj"
+           Description="Web deployment to the local IIS server is no longer supported. The Web Deployment build tool has been removed from your project settings.">
+    </Event>
+    <Event ErrorLevel="1" Project="backend" Source="backend\backend.vcproj"
+           Description="Attribute 'Detect64BitPortabilityProblems' of 'VCCLCompilerTool' is not supported in this version and has been removed during conversion.">
+    </Event>
+    <Event ErrorLevel="1" Project="backend" Source="backend\backend.vcproj"
+           Description="MSB8012: $(TargetName) ('backend') does not match the Linker's OutputFile property value '_TimeTagger.pyd' ('_TimeTagger') in project configuration 'Release|Win32'. This may cause your project to build incorrectly. To correct this, please make sure that $(TargetName) property value matches the value specified in %(Link.OutputFile).">
+    </Event>
+    <Event ErrorLevel="1" Project="backend" Source="backend\backend.vcproj"
+           Description="MSB8012: $(TargetExt) ('.dll') does not match the Linker's OutputFile property value '_TimeTagger.pyd' ('.pyd') in project configuration 'Release|Win32'. This may cause your project to build incorrectly. To correct this, please make sure that $(TargetExt) property value matches the value specified in %(Link.OutputFile).">
+    </Event>
+    <Event ErrorLevel="1" Project="backend" Source="backend\backend.vcproj"
+           Description="MSB8012: $(TargetPath) ('D:\software\pi3diamond.fpga\timetagger_fazhan\backend\Release\backend.dll') does not match the Linker's OutputFile property value '_TimeTagger.pyd' ('D:\software\pi3diamond.fpga\timetagger_fazhan\backend\_TimeTagger.pyd') in project configuration 'Release|Win32'. This may cause your project to build incorrectly. To correct this, please make sure that $(TargetPath) property value matches the value specified in %(Link.OutputFile).">
+    </Event>
+    <Event ErrorLevel="0" Project="backend" Source="backend\backend.vcproj"
+           Description="Done converting to new project file 'D:\software\pi3diamond.fpga\timetagger_fazhan\backend\backend\backend.vcxproj'.">
+    </Event>
+    <Event ErrorLevel="3" Project="backend" Source="backend\backend.vcproj" Description="Converted">
+    </Event>
+    <Event ErrorLevel="0" Project="" Source="backend.sln" Description="Die Projektmappe wurde erfolgreich konvertiert.">
+    </Event>
+    <Event ErrorLevel="3" Project="" Source="backend.sln" Description="Converted">
+    </Event>
+</UpgradeLog>

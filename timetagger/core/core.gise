@@ -1,0 +1,200 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<generated_project xmlns="http://www.xilinx.com/XMLSchema" xmlns:xil_pn="http://www.xilinx.com/XMLSchema">
+
+  <!--                                                          -->
+
+  <!--             For tool use only. Do not edit.              -->
+
+  <!--                                                          -->
+
+  <!-- ProjectNavigator created generated project file.         -->
+
+  <!-- For use in tracking generated file and other information -->
+
+  <!-- allowing preservation of process status.                 -->
+
+  <!--                                                          -->
+
+  <!-- Copyright (c) 1995-2011 Xilinx, Inc.  All rights reserved. -->
+
+  <version xmlns="http://www.xilinx.com/XMLSchema">11.1</version>
+
+  <sourceproject xmlns="http://www.xilinx.com/XMLSchema" xil_pn:fileType="FILE_XISE" xil_pn:name="core.xise"/>
+
+  <files xmlns="http://www.xilinx.com/XMLSchema">
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_NGDBUILD_LOG" xil_pn:name="TimeTaggerController.bld"/>
+    <file xil_pn:fileType="FILE_CMD_LOG" xil_pn:name="TimeTaggerController.cmd_log"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_LSO" xil_pn:name="TimeTaggerController.lso"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_NCD" xil_pn:name="TimeTaggerController.ncd" xil_pn:subbranch="Par"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_NGC" xil_pn:name="TimeTaggerController.ngc"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_NGD" xil_pn:name="TimeTaggerController.ngd"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_NGR" xil_pn:name="TimeTaggerController.ngr"/>
+    <file xil_pn:fileType="FILE_PAD_MISC" xil_pn:name="TimeTaggerController.pad"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_PAR_REPORT" xil_pn:name="TimeTaggerController.par" xil_pn:subbranch="Par"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_PCF" xil_pn:name="TimeTaggerController.pcf" xil_pn:subbranch="Map"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_XST_PROJECT" xil_pn:name="TimeTaggerController.prj"/>
+    <file xil_pn:fileType="FILE_TRCE_MISC" xil_pn:name="TimeTaggerController.ptwx"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_XST_STX" xil_pn:name="TimeTaggerController.stx"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_XST_REPORT" xil_pn:name="TimeTaggerController.syr"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_TIMING_TXT_REPORT" xil_pn:name="TimeTaggerController.twr" xil_pn:subbranch="Par"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_TIMING_XML_REPORT" xil_pn:name="TimeTaggerController.twx" xil_pn:subbranch="Par"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_UNROUTES" xil_pn:name="TimeTaggerController.unroutes" xil_pn:subbranch="Par"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_BITGEN_REPORT" xil_pn:name="TimeTaggerController.ut" xil_pn:subbranch="FPGAConfiguration"/>
+    <file xil_pn:fileType="FILE_XPI" xil_pn:name="TimeTaggerController.xpi"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_XST" xil_pn:name="TimeTaggerController.xst"/>
+    <file xil_pn:fileType="FILE_HTML" xil_pn:name="TimeTaggerController_envsettings.html"/>
+    <file xil_pn:fileType="FILE_NCD" xil_pn:name="TimeTaggerController_guide.ncd" xil_pn:origination="imported"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_MAP_REPORT" xil_pn:name="TimeTaggerController_map.map" xil_pn:subbranch="Map"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_MAP_REPORT" xil_pn:name="TimeTaggerController_map.mrp" xil_pn:subbranch="Map"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_NCD" xil_pn:name="TimeTaggerController_map.ncd" xil_pn:subbranch="Map"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_NGM" xil_pn:name="TimeTaggerController_map.ngm" xil_pn:subbranch="Map"/>
+    <file xil_pn:fileType="FILE_XRPT" xil_pn:name="TimeTaggerController_map.xrpt"/>
+    <file xil_pn:fileType="FILE_XRPT" xil_pn:name="TimeTaggerController_ngdbuild.xrpt"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_PAD_EXCEL_REPORT" xil_pn:name="TimeTaggerController_pad.csv" xil_pn:subbranch="Par"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_PAD_TXT_REPORT" xil_pn:name="TimeTaggerController_pad.txt" xil_pn:subbranch="Par"/>
+    <file xil_pn:fileType="FILE_XRPT" xil_pn:name="TimeTaggerController_par.xrpt"/>
+    <file xil_pn:fileType="FILE_HTML" xil_pn:name="TimeTaggerController_summary.html"/>
+    <file xil_pn:fileType="FILE_FITTER_REPORT" xil_pn:name="TimeTaggerController_summary.xml"/>
+    <file xil_pn:fileType="FILE_WEBTALK" xil_pn:name="TimeTaggerController_usage.xml"/>
+    <file xil_pn:fileType="FILE_XRPT" xil_pn:name="TimeTaggerController_xst.xrpt"/>
+    <file xil_pn:fileType="FILE_DIRECTORY" xil_pn:name="_ngo"/>
+    <file xil_pn:fileType="FILE_XMSGS" xil_pn:name="_xmsgs/bitgen.xmsgs"/>
+    <file xil_pn:fileType="FILE_XMSGS" xil_pn:name="_xmsgs/map.xmsgs"/>
+    <file xil_pn:fileType="FILE_XMSGS" xil_pn:name="_xmsgs/ngdbuild.xmsgs"/>
+    <file xil_pn:fileType="FILE_XMSGS" xil_pn:name="_xmsgs/par.xmsgs"/>
+    <file xil_pn:fileType="FILE_XMSGS" xil_pn:name="_xmsgs/trce.xmsgs"/>
+    <file xil_pn:fileType="FILE_XMSGS" xil_pn:name="_xmsgs/xst.xmsgs"/>
+    <file xil_pn:fileType="FILE_LOG" xil_pn:name="ipcore_dir/coregen.log"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_BITGEN_REPORT" xil_pn:name="timetaggercontroller.bgn" xil_pn:subbranch="FPGAConfiguration"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_BIT" xil_pn:name="timetaggercontroller.bit" xil_pn:subbranch="FPGAConfiguration"/>
+    <file xil_pn:branch="Implementation" xil_pn:fileType="FILE_BITGEN_DRC" xil_pn:name="timetaggercontroller.drc" xil_pn:subbranch="FPGAConfiguration"/>
+    <file xil_pn:fileType="FILE_HTML" xil_pn:name="usage_statistics_webtalk.html"/>
+    <file xil_pn:fileType="FILE_LOG" xil_pn:name="webtalk.log"/>
+    <file xil_pn:fileType="FILE_FITTER_REPORT" xil_pn:name="webtalk_pn.xml"/>
+    <file xil_pn:fileType="FILE_DIRECTORY" xil_pn:name="xlnx_auto_0_xdb"/>
+    <file xil_pn:fileType="FILE_DIRECTORY" xil_pn:name="xst"/>
+  </files>
+
+  <transforms xmlns="http://www.xilinx.com/XMLSchema">
+    <transform xil_pn:end_ts="1394033861" xil_pn:name="TRAN_copyInitialToXSTAbstractSynthesis" xil_pn:start_ts="1394033861">
+      <status xil_pn:value="SuccessfullyRun"/>
+      <status xil_pn:value="ReadyToRun"/>
+    </transform>
+    <transform xil_pn:end_ts="1394033861" xil_pn:name="TRAN_schematicsToHdl" xil_pn:prop_ck="-3369302569485608826" xil_pn:start_ts="1394033861">
+      <status xil_pn:value="SuccessfullyRun"/>
+      <status xil_pn:value="ReadyToRun"/>
+    </transform>
+    <transform xil_pn:end_ts="1394033861" xil_pn:in_ck="174565733309053817" xil_pn:name="TRAN_regenerateCores" xil_pn:prop_ck="2006162680129643055" xil_pn:start_ts="1394033861">
+      <status xil_pn:value="SuccessfullyRun"/>
+      <status xil_pn:value="ReadyToRun"/>
+      <outfile xil_pn:name="ipcore_dir/PurifierBuffer.ngc"/>
+      <outfile xil_pn:name="ipcore_dir/PurifierBuffer.v"/>
+      <outfile xil_pn:name="ipcore_dir/RamFifo_Input.ngc"/>
+      <outfile xil_pn:name="ipcore_dir/RamFifo_Input.v"/>
+      <outfile xil_pn:name="ipcore_dir/RamFifo_Output.ngc"/>
+      <outfile xil_pn:name="ipcore_dir/RamFifo_Output.v"/>
+    </transform>
+    <transform xil_pn:end_ts="1394033861" xil_pn:in_ck="4435956318113328996" xil_pn:name="TRAN_SubProjectAbstractToPreProxy" xil_pn:start_ts="1394033861">
+      <status xil_pn:value="SuccessfullyRun"/>
+      <status xil_pn:value="ReadyToRun"/>
+    </transform>
+    <transform xil_pn:end_ts="1394033861" xil_pn:name="TRAN_xawsTohdl" xil_pn:prop_ck="-3714607700690334140" xil_pn:start_ts="1394033861">
+      <status xil_pn:value="SuccessfullyRun"/>
+      <status xil_pn:value="ReadyToRun"/>
+    </transform>
+    <transform xil_pn:end_ts="1394033861" xil_pn:in_ck="4435956318113328996" xil_pn:name="TRAN_SubProjectPreToStructuralProxy" xil_pn:prop_ck="-5485052969258608911" xil_pn:start_ts="1394033861">
+      <status xil_pn:value="SuccessfullyRun"/>
+      <status xil_pn:value="ReadyToRun"/>
+    </transform>
+    <transform xil_pn:end_ts="1394033861" xil_pn:name="TRAN_platgen" xil_pn:prop_ck="-2208301541208531079" xil_pn:start_ts="1394033861">
+      <status xil_pn:value="SuccessfullyRun"/>
+      <status xil_pn:value="ReadyToRun"/>
+    </transform>
+    <transform xil_pn:end_ts="1394033944" xil_pn:in_ck="1498556998923366139" xil_pn:name="TRANEXT_xstsynthesize_spartan3e" xil_pn:prop_ck="-3466215409301052955" xil_pn:start_ts="1394033861">
+      <status xil_pn:value="SuccessfullyRun"/>
+      <status xil_pn:value="WarningsGenerated"/>
+      <status xil_pn:value="ReadyToRun"/>
+      <status xil_pn:value="OutOfDateForOutputs"/>
+      <status xil_pn:value="OutputChanged"/>
+      <outfile xil_pn:name="TimeTaggerController.lso"/>
+      <outfile xil_pn:name="TimeTaggerController.ngc"/>
+      <outfile xil_pn:name="TimeTaggerController.ngr"/>
+      <outfile xil_pn:name="TimeTaggerController.prj"/>
+      <outfile xil_pn:name="TimeTaggerController.stx"/>
+      <outfile xil_pn:name="TimeTaggerController.syr"/>
+      <outfile xil_pn:name="TimeTaggerController.xst"/>
+      <outfile xil_pn:name="TimeTaggerController_xst.xrpt"/>
+      <outfile xil_pn:name="_xmsgs/xst.xmsgs"/>
+      <outfile xil_pn:name="webtalk_pn.xml"/>
+      <outfile xil_pn:name="xst"/>
+    </transform>
+    <transform xil_pn:end_ts="1493031179" xil_pn:in_ck="-5474999544688878791" xil_pn:name="TRAN_compileBCD2" xil_pn:prop_ck="-6430931402490355473" xil_pn:start_ts="1493031179">
+      <status xil_pn:value="SuccessfullyRun"/>
+      <status xil_pn:value="ReadyToRun"/>
+    </transform>
+    <transform xil_pn:end_ts="1493031190" xil_pn:in_ck="-1424147564972708878" xil_pn:name="TRANEXT_ngdbuild_FPGA" xil_pn:prop_ck="4405569909697976626" xil_pn:start_ts="1493031179">
+      <status xil_pn:value="SuccessfullyRun"/>
+      <status xil_pn:value="WarningsGenerated"/>
+      <status xil_pn:value="ReadyToRun"/>
+      <outfile xil_pn:name="TimeTaggerController.bld"/>
+      <outfile xil_pn:name="TimeTaggerController.ngd"/>
+      <outfile xil_pn:name="TimeTaggerController_ngdbuild.xrpt"/>
+      <outfile xil_pn:name="_ngo"/>
+      <outfile xil_pn:name="_xmsgs/ngdbuild.xmsgs"/>
+    </transform>
+    <transform xil_pn:end_ts="1493031320" xil_pn:in_ck="-5201104062493248211" xil_pn:name="TRANEXT_map_spartan3" xil_pn:prop_ck="-4101814193554204739" xil_pn:start_ts="1493031190">
+      <status xil_pn:value="SuccessfullyRun"/>
+      <status xil_pn:value="WarningsGenerated"/>
+      <status xil_pn:value="ReadyToRun"/>
+      <outfile xil_pn:name="TimeTaggerController.pcf"/>
+      <outfile xil_pn:name="TimeTaggerController_map.map"/>
+      <outfile xil_pn:name="TimeTaggerController_map.mrp"/>
+      <outfile xil_pn:name="TimeTaggerController_map.ncd"/>
+      <outfile xil_pn:name="TimeTaggerController_map.ngm"/>
+      <outfile xil_pn:name="TimeTaggerController_map.xrpt"/>
+      <outfile xil_pn:name="TimeTaggerController_summary.xml"/>
+      <outfile xil_pn:name="TimeTaggerController_usage.xml"/>
+      <outfile xil_pn:name="_xmsgs/map.xmsgs"/>
+    </transform>
+    <transform xil_pn:end_ts="1493031380" xil_pn:in_ck="4854934443714032070" xil_pn:name="TRANEXT_par_spartan3" xil_pn:prop_ck="7693008147976918541" xil_pn:start_ts="1493031320">
+      <status xil_pn:value="SuccessfullyRun"/>
+      <status xil_pn:value="WarningsGenerated"/>
+      <status xil_pn:value="ReadyToRun"/>
+      <outfile xil_pn:name="TimeTaggerController.ncd"/>
+      <outfile xil_pn:name="TimeTaggerController.pad"/>
+      <outfile xil_pn:name="TimeTaggerController.par"/>
+      <outfile xil_pn:name="TimeTaggerController.ptwx"/>
+      <outfile xil_pn:name="TimeTaggerController.unroutes"/>
+      <outfile xil_pn:name="TimeTaggerController.xpi"/>
+      <outfile xil_pn:name="TimeTaggerController_pad.csv"/>
+      <outfile xil_pn:name="TimeTaggerController_pad.txt"/>
+      <outfile xil_pn:name="TimeTaggerController_par.xrpt"/>
+      <outfile xil_pn:name="_xmsgs/par.xmsgs"/>
+    </transform>
+    <transform xil_pn:end_ts="1394034134" xil_pn:in_ck="-5474999544688886416" xil_pn:name="TRANEXT_bitFile_spartan3e" xil_pn:prop_ck="287829442711806529" xil_pn:start_ts="1394034103">
+      <status xil_pn:value="SuccessfullyRun"/>
+      <status xil_pn:value="WarningsGenerated"/>
+      <status xil_pn:value="ReadyToRun"/>
+      <status xil_pn:value="OutOfDateForInputs"/>
+      <status xil_pn:value="OutOfDateForOutputs"/>
+      <status xil_pn:value="InputChanged"/>
+      <status xil_pn:value="OutputChanged"/>
+      <outfile xil_pn:name="TimeTaggerController.ut"/>
+      <outfile xil_pn:name="_xmsgs/bitgen.xmsgs"/>
+      <outfile xil_pn:name="timetaggercontroller.bgn"/>
+      <outfile xil_pn:name="timetaggercontroller.bit"/>
+      <outfile xil_pn:name="timetaggercontroller.drc"/>
+      <outfile xil_pn:name="usage_statistics_webtalk.html"/>
+      <outfile xil_pn:name="webtalk.log"/>
+      <outfile xil_pn:name="webtalk_pn.xml"/>
+    </transform>
+    <transform xil_pn:end_ts="1493031380" xil_pn:in_ck="7291725358996711593" xil_pn:name="TRAN_postRouteTrce" xil_pn:prop_ck="445577401284416186" xil_pn:start_ts="1493031367">
+      <status xil_pn:value="SuccessfullyRun"/>
+      <status xil_pn:value="ReadyToRun"/>
+      <outfile xil_pn:name="TimeTaggerController.twr"/>
+      <outfile xil_pn:name="TimeTaggerController.twx"/>
+      <outfile xil_pn:name="_xmsgs/trce.xmsgs"/>
+    </transform>
+  </transforms>
+
+</generated_project>

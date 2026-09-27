@@ -1,0 +1,345 @@
+# PY3-PORT: threading camelCase aliases (currentThread, isSet,
+# setDaemon, ...) were deprecated in Python 3.10 and REMOVED in 3.13.
+# Rewritten to the snake_case names, which have worked since 2.6.
+"""
+There are several distinct ways to go through different NVs and perform
+certain measurement tasks. 
+
+1. using the queue and 'SwitchTarget' and 'SaveJob' and 'SetJob'
+
+  For each task, create a job and submit it to the queue.
+  Provide a 'special' job for switching the NV. I.e., a queue might
+  look like this: [ ODMR, Rabi, SwitchTarget, ODMR, Rabi, SwitchTarget, ...]
+
+  pro: - very simple
+       - a different set of Jobs can be submitted for individual NVs
+       - every part of the 'code' is basically tested separately (uses only
+         existing jobs) --> very low chance for errors
+       - queue can be modified by user on run time, e.g., if an error in the tasks
+         is discovered, it can be corrected
+       - the submitted jobs can be run with lower priority than all the usual
+         jobs, i.e., the queue can be kept during daily business and will
+         automatically resume during any free time
+         
+  con: - no complicated decision making on how subsequent tasks are executed,
+         e.g., no possibility to do first a coarse ESR, then decide in which range
+         to do a finer ESR, etc. 
+       - it is easy to forget save jobs. If everything goes well this is not a problem,
+         because the jobs can be saved later at any time, but if there is a crash,
+         unsaved jobs are lost
+
+2. using an independent MissionControl job that is not managed by the JobManager
+
+  Write a new job, that is not managed by the JobManager, i.e., that runs independently
+  of the queue. This Job will submit jobs to the queue as needed.
+  
+  pro: - allows complex ways to submit jobs, e.g., depending on the result of previous
+         measurement, with analysis performed in between, etc.
+
+  con: - cannot be changed after started
+       - control job will often be 'new code' and thus may have errors. It is
+         difficult to test --> error prone
+"""
+
+DEBUG = False
+
+import logging
+import threading
+import time
+
+import numpy as np
+from chaco.api import ArrayPlotData
+from enable.api import ComponentEditor
+from traits.api import Array, File, Instance, Button, Enum, Str
+from traitsui.api import View, Item, HGroup, VGroup
+
+from measurements.auto_focus_dim import AutoFocusDim
+from measurements.odmr import ODMR
+from tools.chaco_addons import SavePlot as Plot, SaveTool
+from tools.data_toolbox import string_to_file  # , list_to_file
+from tools.emod import Job
+
+
+# from tools.utility import GetSetItemsMixin
+
+
+class Zeeman(Job):  # , GetSetItemsMixin ):
+
+    """Automatic Zeeman measurements for calibration purposes"""
+
+    start_button = Button(label='start', desc='Start the measurement.')
+    stop_button = Button(label='stop', desc='Stop the measurement.')
+    info_string = Str('Hello world!')
+
+    def _start_button_fired(self):
+        """React to start button. Submit the Job."""
+        self.start()
+
+    def _stop_button_fired(self):
+        """React to stop button. Remove the Job."""
+        mag_coil.save_stop()
+        self.stop()
+
+    # Paths 
+    basename = File()
+    odmr_name1 = File()
+    odmr_name2 = File()
+    odmr_name3 = File()
+    odmr_name4 = File()
+
+    # mag_coil values
+    currents = Array(dtype=float)
+    channels = Enum(['all', 1, 2, 3])
+
+    # ODMR
+    odmr = Instance(ODMR, factory=ODMR)
+    auto_focus = Instance(AutoFocusDim, factory=AutoFocusDim)
+
+    # Auto Focus
+    targets = Array(dtype=str)
+
+    # Results
+    data = Array()
+    f1 = Array(dtype=float)
+    f2 = Array(dtype=float)
+
+    # Plotting
+    line_data = Instance(ArrayPlotData)
+    line_plot = Instance(Plot, editor=ComponentEditor())
+
+    traits_view = View(VGroup(HGroup(Item('start_button', show_label=False),
+                                     Item('stop_button', show_label=False),
+                                     Item('state', style='readonly'),
+                                     Item('channels'),
+                                     ),
+                              # VGroup(Item('voltage', label='Laser Voltage'),
+                              #       ),
+                              VGroup(Item('info_string', label='Info', style='readonly'),
+                                     ),
+                              VGroup(Item('currents')  # , style='readonly'),
+                                     ),
+                              VGroup(Item('targets')  # , style='readonly'),
+                                     ),
+                              VGroup(Item('basename'),
+                                     ),
+                              VGroup(Item('odmr_name1'),
+                                     ),
+                              VGroup(Item('odmr_name2'),
+                                     ),
+                              VGroup(Item('odmr_name3'),
+                                     ),
+                              VGroup(Item('odmr_name4'),
+                                     ),
+                              Item('line_plot', show_label=False, resizable=True),
+                              ),
+                       title='Zeeman', buttons=[], resizable=True
+                       )
+
+    get_set_items = ['currents', 'f1', 'f2', 'channels', 'targets', 'basename', 'odmr_name1', 'odmr_name2',
+                     'odmr_name3', 'odmr_name4', '__doc__']  # 'voltage',
+
+    def __init__(self, mag_coil, targets='current', **kwargs):
+        self.mag_coil = mag_coil
+        if targets == 'all':
+            self.targets = auto_focus.target_list[1:]
+        elif targets == 'current':
+            self.targets = [auto_focus.current_target, ]
+        else:
+            self.targets = targets
+        super(Zeeman, self).__init__(**kwargs)
+        # self.odmr = odmr
+        # self.auto_focus = auto_focus
+        self._create_line_plot()
+        self.on_trait_change(self._update_plot_f1, 'f1', dispatch='ui')
+        self.on_trait_change(self._update_plot_f2, 'f2', dispatch='ui')
+        # self.laser = laser
+
+    #        self.add_trait('voltage',
+    #                       Trait(None, None, Range(low=float(laser.voltage_range[0]),
+    #                                               high=float(laser.voltage_range[1]),
+    #                                               value=float(laser.voltage),
+    #                                               desc='can be None or Float. If Float, use this voltage for the laser during focusing.',
+    #                                               label='laser voltage'
+    #                                               ),
+    #                             editor=TextEditor())
+    #                       )
+
+    def _get_transition(self, odmr_name, save_string=''):
+        odmr = self.odmr
+
+        if DEBUG: print('Loading odmr: ' + str(odmr_name))
+        odmr.load(odmr_name)
+        time.sleep(1)
+        if odmr.stop_time == np.inf:
+            raise ValueError('ODMR stop time set to infinity.')
+        odmr.perform_fit = False
+        odmr.submit()
+        while odmr.state != 'done':
+            threading.current_thread().stop_request.wait(1.0)
+            if threading.current_thread().stop_request.is_set():
+                odmr.remove()
+                return [np.NAN, ]
+        time.sleep(2)  # make sure that the job is also done from the point of view of the JobManager
+        odmr.perform_fit = True
+        time.sleep(2)
+        filename = self.basename + '_' + save_string
+        if DEBUG: print('Saving: ' + filename)
+        odmr.save_all(filename)
+        return odmr.fit_frequencies
+
+    def _select_target(self, new_target):
+        auto_focus.periodic_focus = False
+        while auto_focus.state != 'idle':
+            threading.current_thread().stop_request.wait(1.0)
+            if threading.current_thread().stop_request.is_set():
+                break
+
+        auto_focus.current_target = new_target
+        auto_focus.submit()
+
+        time.sleep(1)
+        while (auto_focus.state == 'run'):
+            time.sleep(0.5)
+        time.sleep(1)
+
+        auto_focus.submit()
+        auto_focus.periodic_focus = True
+
+        while auto_focus.state != 'idle':
+            threading.current_thread().stop_request.wait(1.0)
+            if threading.current_thread().stop_request.is_set():
+                break
+
+    def _run(self):
+        try:
+            self.state = 'run'
+            # if self.voltage is not None:
+            #    prev_voltage = self.laser.voltage
+            #    self.laser.voltage = float(self.voltage)
+
+            if self.basename == '':
+                raise ValueError('Filename: missing. Please specify a filename and try again.')
+            if self.odmr_name1 == '':
+                raise ValueError('Filenames: missing. Please specify a filename and try again.')
+
+            if self.channels == 'all':
+                channels = [1, 2, 3]
+            else:
+                channels = list((self.channels,))
+
+            if DEBUG: print('channels: ' + str(channels))
+
+            for channel in channels:
+
+                filename = self.basename + '_ch' + str(channel)
+                string = '#nv,current,f1,f2\n'
+                string_to_file(string, filename + '.txt')
+
+                for t, target in enumerate(self.targets):
+                    self._select_target(target)
+                    for i, current in enumerate(self.currents):
+                        self.info_string = 'ch' + str(channel) + '_' + str(target) + '_' + str(current * 1000) + 'mA'
+                        try:
+                            self.mag_coil.save_stop()
+                            self.mag_coil.set_current(channel, current)
+                        except:
+                            print('Failed to set correct field:' + str(current) + 'A , channel: ' + str(channel))
+                            current = np.NAN
+                        finally:
+                            time.sleep(1)
+                            print('Current on channel ' + str(channel) + ' is: ' + str(
+                                mag_coil.get_field(channel)) + 'A now!')
+
+                        try:
+                            f1 = np.NAN
+                            f2 = np.NAN
+                            save_string = self.info_string
+
+                            if t == 1 and self.odmr_name2 != '':
+                                odmr_name = self.odmr_name2
+                            elif t == 2 and self.odmr_name3 != '':
+                                odmr_name = self.odmr_name3
+                            elif t == 3 and self.odmr_name4 != '':
+                                odmr_name = self.odmr_name4
+                            else:
+                                odmr_name = self.odmr_name1
+
+                            f = self._get_transition(odmr_name, save_string)
+                            if len(f) == 2:
+                                f1 = f[0]
+                                f2 = f[1]
+                            else:
+                                f1 = f[:3].mean()
+                                f2 = f[3:].mean()
+                        except:
+                            print('odmr FAIL')
+                        finally:
+                            split = np.abs(f1 - f2)
+                            center = (f1 + f2) / 2.
+
+                        string = str(target) + ',' + str(current) + ',' + str(f1) + ',' + str(f2) + '\n'
+                        string_to_file(string, filename + '.txt')
+                        # self.line_plot.save(filename+'_'+str(target)+'.png')
+
+                        if threading.current_thread().stop_request.is_set():
+                            break
+                        # end current for loop
+                    if threading.current_thread().stop_request.is_set():
+                        break
+                    # end channel for loop
+                if threading.current_thread().stop_request.is_set():
+                    break
+                # end target for loop         
+            self.state = 'done'
+        except:
+            logging.getLogger().exception('Error in Zeeman.')
+            self.state = 'error'
+        finally:
+            print("shutting down field and laser...")
+            # if self.voltage is not None:
+            #    self.laser.voltage = prev_voltage
+            #    time.sleep(0.1)
+            self.mag_coil.save_stop()
+
+    def _create_line_plot(self):
+        line_data = ArrayPlotData(currents=np.array(()), f1=np.array(()), f2=np.array(()))
+        plot = Plot(line_data, padding=8, padding_left=64, padding_bottom=64)
+        plot.plot(('currents', 'f1'), color='blue', name='zeeman')
+        plot.plot(('currents', 'f2'), color='red', name='zeeman')
+        plot.index_axis.title = 'current [mA]'
+        plot.value_axis.title = 'frequency [MHz]'
+        plot.tools.append(SaveTool(plot))
+        self.line_data = line_data
+        self.line_plot = plot
+
+    def _update_plot_f1(self, new):
+        n = len(new)
+        self.line_data.set_data('currents', self.currents[:n])
+        self.line_data.set_data('f1', new * 1e-6)
+
+    def _update_plot_f2(self, new):
+        n = len(new)
+        self.line_data.set_data('currents', self.currents[:n])
+        self.line_data.set_data('f2', new * 1e-6)
+
+    def save_line_plot(self, filename):
+        self.save_figure(self.line_plot, filename)
+
+
+if __name__ == '__main__':
+    # currents = np.array((np.arange(1.0, 3.5, 0.5)))#,np.arange(-1.0, -3.5, -0.5))).ravel()
+    # currents = np.array((np.arange(0., 3.0, 0.5)))
+    currents = np.array((0.,))
+    targets = ['nv50', 'nv43', 'nv46', 'nv47']
+    # targets='all'
+    # currents = np.array((1.0,))
+    # (self, laser, mag_coil, targets='current', **kwargs)
+    zeeman = Zeeman(mag_coil, targets=targets, auto_focus=auto_focus, currents=currents, odmr=odmr)
+    zeeman.edit_traits()
+    # zeeman.voltage = -4.0
+    zeeman.basename = 'D:\\data\\LabBook\\2013-08-22\\zero\\2013-08-22_PhillipNA_zero'
+    zeeman.odmr_name1 = 'D:\\data\\LabBook\\2013-08-22\\2013-08-22_nv50_template_ODMR.pys'
+    zeeman.odmr_name2 = 'D:\\data\\LabBook\\2013-01-22\\2013-01-22_nv43_template_ODMR.pys'
+    zeeman.odmr_name3 = 'D:\\data\\LabBook\\2013-01-22\\2013-01-22_nv46_template_ODMR.pys'
+    zeeman.odmr_name4 = 'D:\\data\\LabBook\\2013-01-22\\2013-01-22_nv47_template_ODMR.pys'
+    # zeeman.start()

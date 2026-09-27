@@ -1,0 +1,446 @@
+"""
+Classes to conduct a XY measurement.
+As all advanced NV-ESR measurements we inherit from Rabi and already have the Rabi-variables at hand
+Alongside to receiving them from global_vars.py
+See rabi.py as example.
+TODO: On the fly evaluation, i.e. subtracting the two pulse sequences and evaluation of the latter.
+"""
+
+from traits.api import Range, Int, Float, Bool
+from traitsui.api import View, Item, Tabbed, HGroup, VGroup
+
+from .hahn_echo import Hahn
+from .pulsed import sequence_remove_zeros, sequence_simplify
+from .rabi import Rabi
+
+
+class XY83pi2(Rabi):
+    """
+    Defines an XY8 measurement with both pi/2 and 3pi/2 readout pulse,
+    using a second microwave switch for 90 degree phase shifted pi pulses.
+    """
+
+    n_pi = Range(low=1, high=100000, value=8, desc='number of pi pulses', label='n pi', mode='text',
+                 auto_set=False,
+                 enter_set=True)
+
+    def generate_sequence(self):
+        tau = self.tau
+        laser = self.laser
+
+        mw_x_t_pi2 = self.mw_x_t_pi2
+        mw_x_t_pi = self.mw_x_t_pi
+        mw_y_t_pi = self.mw_y_t_pi
+        mw_x_t_3pi2 = self.mw_x_t_3pi2
+        n_pi = self.n_pi
+
+        decay_init = self.decay_init
+        # decay_read = self.decay_read
+        # aom_delay = self.aom_delay
+
+        sequence = []
+        for t in tau:
+            dt = t / float(2 * n_pi)
+            sequence += [(['mw_x'], mw_x_t_pi2)]
+            # PY3-PORT: was `n_pi / 8`. n_pi is Range(low=1, high=100000, value=8)
+            # -- an int trait -- so Python 3 yields a float and list
+            # repetition raises TypeError. Note the line above already
+            # writes `t / float(2 * n_pi)` explicitly, so the author knew
+            # the distinction and applied it unevenly.
+            sequence += n_pi // 8 * [
+                ([], dt),
+                (['mw_y'], mw_y_t_pi),
+                ([], 2 * dt),
+                (['mw_x'], mw_x_t_pi),
+                ([], 2 * dt),
+                (['mw_y'], mw_y_t_pi),
+                ([], 2 * dt),
+                (['mw_x'], mw_x_t_pi),
+                ([], 2 * dt),
+                (['mw_x'], mw_x_t_pi),
+                ([], 2 * dt),
+                (['mw_y'], mw_y_t_pi),
+                ([], 2 * dt),
+                (['mw_x'], mw_x_t_pi),
+                ([], 2 * dt),
+                (['mw_y'], mw_y_t_pi),
+                ([], dt),
+            ]
+            sequence += [(['mw_x'], mw_x_t_pi2)]
+            sequence += [(['detect', 'aom'], laser), ([], decay_init)]
+        for t in tau:
+            dt = t / float(2 * n_pi)
+            sequence += [(['mw_x'], mw_x_t_pi2)]
+            # HW-FIX: third site of this. List repetition by a float
+            # raises TypeError; n_pi is an int trait.
+            sequence += n_pi // 8 * [
+                ([], dt),
+                (['mw_y'], mw_y_t_pi),
+                ([], 2 * dt),
+                (['mw_x'], mw_x_t_pi),
+                ([], 2 * dt),
+                (['mw_y'], mw_y_t_pi),
+                ([], 2 * dt),
+                (['mw_x'], mw_x_t_pi),
+                ([], 2 * dt),
+                (['mw_x'], mw_x_t_pi),
+                ([], 2 * dt),
+                (['mw_y'], mw_y_t_pi),
+                ([], 2 * dt),
+                (['mw_x'], mw_x_t_pi),
+                ([], 2 * dt),
+                (['mw_y'], mw_y_t_pi),
+                ([], dt),
+            ]
+            sequence += [(['mw_x'], mw_x_t_3pi2)]
+            sequence += [(['detect', 'aom'], laser), ([], decay_init)]
+        sequence += [(['sequence'], 100)]
+        sequence = sequence_simplify(sequence)
+        return sequence
+
+    get_set_items = Rabi.get_set_items + ['mw_x_t_pi2', 'mw_y_t_pi', 'mw_x_t_3pi2', 'n_pi']
+
+    traits_view = View(VGroup(HGroup(Item('submit_button', show_label=False),
+                                     Item('remove_button', show_label=False),
+                                     Item('resubmit_button', show_label=False),
+                                     Item('priority'),
+                                     Item('state', style='readonly'),
+                                     Item('run_time', style='readonly', format_str='%.f'),
+                                     Item('stop_time', format_str='%.f'),
+                                     Item('stop_counts'),
+                                     ),
+                              HGroup(Item('filename', springy=True),
+                                     Item('save_button', show_label=False),
+                                     Item('load_button', show_label=False)
+                                     ),
+                              Tabbed(VGroup(HGroup(
+                                  Item('frequency', width=-120, enabled_when='state != "run"'),
+                                  Item('power', width=-60, enabled_when='state != "run"'),
+                                  # Item('aom_delay',     width=-80, enabled_when='state != "run"'),
+                              ),
+                                  HGroup(Item('laser', width=-80,
+                                              enabled_when='state != "run"'),
+                                         Item('decay_init', width=-80,
+                                              enabled_when='state != "run"'),
+                                         # Item('decay_read',    width=-80, enabled_when='state != "run"'),
+                                         ),
+                                  HGroup(Item('mw_x_t_pi2', width=-80,
+                                              enabled_when='state != "run"'),
+                                         Item('mw_y_t_pi', width=-80,
+                                              enabled_when='state != "run"'),
+                                         Item('mw_x_t_3pi2', width=-80,
+                                              enabled_when='state != "run"'),
+                                         Item('n_pi', width=-80,
+                                              enabled_when='state != "run"'), ),
+                                  HGroup(Item('tau_begin', width=-80,
+                                              enabled_when='state != "run"'),
+                                         Item('tau_end', width=-80,
+                                              enabled_when='state != "run"'),
+                                         Item('tau_delta', width=-80,
+                                              enabled_when='state != "run"'),
+                                         ),
+                                  label='stimulation'),
+                                  VGroup(HGroup(Item('record_length', width=-80,
+                                                     enabled_when='state != "run"'),
+                                                Item('bin_width', width=-80,
+                                                     enabled_when='state != "run"'),
+                                                ),
+                                         label='acquisition'),
+                                  VGroup(HGroup(Item('integration_width'),
+                                                Item('position_signal'),
+                                                Item('position_normalize'),
+                                                ),
+                                         label='analysis'),
+                              ),
+                              ),
+                       title='CPMG Measurement with both pi/2 and 3pi/2 readout pulse',
+                       buttons=[],
+                       resizable=True,
+                       )
+
+
+class XY_8(Rabi):
+    """Values, that define a xy8 - measurement"""
+
+    double_sequence = True
+
+    power_imbalance = Range(low=-1., high=1., value=0., desc='microwave power imbalance',
+                            label='power imbalance [dBm]', mode='text', auto_set=False,
+                            enter_set=True)
+
+    decoupling_order = Int(default_value=1, desc='number of XY_8-Sequences', label='n_seq', mode='text',
+                           auto_set=False, enter_set=True)
+
+    def generate_sequence(self):
+        tau = self.tau
+        laser = self.laser
+        n = self.decoupling_order
+        decay_init = self.decay_init
+
+        mw_x_t_pi2 = self.mw_x_t_pi2
+        mw_x_t_3pi2 = self.mw_x_t_3pi2
+        mw_y_t_pi = self.mw_y_t_pi
+        mw_x_t_pi = self.mw_x_t_pi
+
+        # This lambda function provides us with the correct tau for the approximation of infinetly
+        # short pulses
+        t_bar = lambda t, p1, p2=0.: t - (p1 / 2.) - (p2 / 2.)
+        # check, if the start time is long enough to fit at least the mw pulses in it.
+        tau_min = tau.min()
+        if t_bar(tau_min / (8. * n), mw_y_t_pi, mw_y_t_pi) < 0 or t_bar(tau_min / (8. * n),
+                                                                        mw_x_t_pi, mw_x_t_pi) < 0:
+            raise IOError('The delay between pulses is too short.'
+                          'It has to be larger than the pulse_duration')
+
+        sequence1 = []
+        sequence2 = []
+
+        for t in tau:
+            # t outside the loop should represent the actual time between prep and readout!
+            t /= 8. * n
+            xy_8_part = []
+            init = [(['detect', 'aom'], laser), ([], decay_init)]
+
+            xy_8_part += [(['mw_x'], mw_x_t_pi), ([], t_bar(t, mw_x_t_pi, mw_y_t_pi))]
+            xy_8_part += [(['mw_y'], mw_y_t_pi), ([], t_bar(t, mw_x_t_pi, mw_y_t_pi))]
+            xy_8_part += [(['mw_x'], mw_x_t_pi), ([], t_bar(t, mw_x_t_pi, mw_y_t_pi))]
+            xy_8_part += [(['mw_y'], mw_y_t_pi), ([], t_bar(t, mw_y_t_pi, mw_y_t_pi))]
+            xy_8_part += [(['mw_y'], mw_y_t_pi), ([], t_bar(t, mw_x_t_pi, mw_y_t_pi))]
+            xy_8_part += [(['mw_x'], mw_x_t_pi), ([], t_bar(t, mw_x_t_pi, mw_y_t_pi))]
+            xy_8_part += [(['mw_y'], mw_y_t_pi), ([], t_bar(t, mw_x_t_pi, mw_y_t_pi))]
+            xy_8_part += [(['mw_x'], mw_x_t_pi)]
+
+            start = [(['mw_x'], mw_x_t_pi2), ([], t_bar(t / 2., 0, mw_x_t_pi))]
+            end_pi2 = [([], t_bar(t / 2., mw_x_t_pi, 0)), (['mw_x'], mw_x_t_pi2)]
+            end_3pi2 = [([], t_bar(t / 2., mw_x_t_pi, 0)), (['mw_x'], mw_x_t_3pi2)]
+
+            # build the sequences
+            sequence1 += start + (
+                    (n - 1) * (
+                    xy_8_part + [
+                ([], t_bar(t, mw_x_t_pi, mw_x_t_pi))])) + xy_8_part + end_3pi2 + init
+            sequence2 += start + (
+                    (n - 1) * (
+                    xy_8_part + [([], t_bar(t, mw_x_t_pi, mw_x_t_pi))])) + xy_8_part + end_pi2 + init
+
+        # join the two sequences
+        sequence = sequence1 + sequence2
+        # tail of the sequence
+        sequence += [(['sequence'], 100)]
+        sequence = sequence_remove_zeros(sequence)
+        return sequence
+
+    get_set_items = Rabi.get_set_items + ['mw_x_t_pi2', 'mw_y_t_pi', 'decoupling_order', 'mw_x_t_pi',
+                                          'power_imbalance', 'mw_x_t_3pi2']
+
+    traits_view = View(VGroup(HGroup(Item('submit_button', show_label=False),
+                                     Item('remove_button', show_label=False),
+                                     Item('resubmit_button', show_label=False),
+                                     Item('get_global_vars_button', show_label=False),
+                                     Item('priority'),
+                                     Item('state', style='readonly'),
+                                     Item('run_time', style='readonly', format_str='%.f',
+                                          width=-60),
+                                     Item('stop_time', format_str='%.f', width=-60),
+                                     Item('stop_counts', width=-60),
+                                     ),
+                              HGroup(Item('filename', springy=True),
+                                     Item('save_button', show_label=False),
+                                     Item('load_button', show_label=False),
+                                     Item('periodic_save'),
+                                     Item('save_interval', enabled_when='not periodic_save'),
+                                     ),
+                              Tabbed(VGroup(HGroup(
+                                  Item('mw_frequency', width=-120, enabled_when='state != "run"'),
+                                  Item('mw_power', width=-60, enabled_when='state != "run"'),
+                                  Item('power_imbalance', width=-60, enabled_when='state != "run"'),
+                                  # Item('aom_delay',     width=-80, enabled_when='state != "run"'),
+                              ),
+                                  HGroup(Item('laser', width=-80,
+                                              enabled_when='state != "run"'),
+                                         Item('decay_init', width=-80,
+                                              enabled_when='state != "run"'),
+                                         # Item('decay_read',    width=-80, enabled_when='state != "run"'),
+                                         ),
+                                  HGroup(Item('mw_x_t_pi2', width=-80,
+                                              enabled_when='state != "run"'),
+                                         Item('mw_x_t_pi', width=-80,
+                                              enabled_when='state != "run"'),
+                                         Item('mw_y_t_pi', width=-80,
+                                              enabled_when='state != "run"'),
+                                         Item('mw_x_t_3pi2', width=-80,
+                                              enabled_when='state != "run"'),
+                                         Item('decoupling_order', width=-80,
+                                              enabled_when='state != "run"'), ),
+                                  HGroup(Item('tau_begin', width=-80,
+                                              enabled_when='state != "run"'),
+                                         Item('tau_end', width=-80,
+                                              enabled_when='state != "run"'),
+                                         Item('tau_delta', width=-80,
+                                              enabled_when='state != "run"'),
+                                         ),
+                                  label='acquisition'),
+                                  VGroup(HGroup(Item('integration_width'),
+                                                Item('position_signal'),
+                                                Item('position_normalize'),
+                                                ),
+                                         label='analysis'),
+                              ),
+                              Tabbed(Item('line_plot', show_label=False, width=500, height=-300,
+                                          resizable=True),
+                                     Item('matrix_plot', show_label=False, width=500, height=-300,
+                                          resizable=True),
+                                     Item('pulse_plot', show_label=False, width=500, height=-300,
+                                          resizable=True),
+                                     ),
+                              ),
+                       title='XY8 Sequence',
+                       resizable=True
+                       )
+
+
+class Qdyne(Hahn):
+    """Defines a Qdyne (Quantum heterodyne detection) measurement. The measurement set is set up by
+        XY-8 sequences.
+
+        Each XY-8 sequence gives a fluorescence which can be time correlated. Within this time
+        correlation and a FFT, the frequency of an external signal can be determined
+        """
+
+    pulse_spacing = Float(default_value=1000.,
+                          desc='time between pulses within pulse sequence [ns]',
+                          label='pulse spacing [ns]', mode='text',
+                          auto_set=False, enter_set=True)
+
+    test = Bool(value=False)
+    test_frequency = Range(low=300e3, high=3.3e9, value=1e6, label='Smiq Test Frequency')
+    test_power = Range(low=-40., high=10., value=-20, label='Smiq Test Power')
+
+    get_set_items = Rabi.get_set_items + ['mw_x_t_pi2', 'mw_x_t_pi', 'pulse_spacing', 'mw_y_t_pi2']
+
+    def start_up(self):
+        """ Set Test frequency if needed.
+
+        :return: None.
+        """
+        try:
+            if self.test:
+                self.rf.setOutput(self.test_power, self.test_frequency)
+                super(Qdyne, self).start_up()
+            else:
+                super(Qdyne, self).start_up()
+        except:
+            raise
+
+    def generate_sequence(self):
+        tau = self.tau
+        pulse_spacing = self.pulse_spacing
+        laser = self.laser
+
+        mw_x_t_pi2 = self.mw_x_t_pi2
+        mw_x_t_pi = self.mw_x_t_pi
+        mw_y_t_pi = self.mw_y_t_pi
+
+        decay_init = self.decay_init
+        sequence = []
+
+        for t in tau:
+            if self.test:
+                sequence += [(['mw_x', 'rf'], mw_x_t_pi2), (['rf'], 0.5 * pulse_spacing),
+                             (['mw_y', 'rf'], mw_y_t_pi), (['rf'], pulse_spacing),
+                             (['mw_x', 'rf'], mw_x_t_pi), (['rf'], pulse_spacing),
+                             (['mw_y', 'rf'], mw_y_t_pi), (['rf'], pulse_spacing),
+                             (['mw_x', 'rf'], mw_x_t_pi), (['rf'], pulse_spacing),
+                             (['mw_x', 'rf'], mw_x_t_pi), (['rf'], pulse_spacing),
+                             (['mw_y', 'rf'], mw_y_t_pi), (['rf'], pulse_spacing),
+                             (['mw_x', 'rf'], mw_x_t_pi), (['rf'], pulse_spacing),
+                             (['mw_y', 'rf'], mw_y_t_pi), (['rf'], 0.5 * pulse_spacing),
+                             (['mw_x', 'rf'], mw_x_t_pi2), (['detect', 'aom', 'rf'], laser),
+                             (['rf'], decay_init)]
+            else:
+                sequence += [(['mw_x'], mw_x_t_pi2), ([], 0.5 * pulse_spacing),
+                             (['mw_y'], mw_y_t_pi), ([], pulse_spacing),
+                             (['mw_x'], mw_x_t_pi), ([], pulse_spacing),
+                             (['mw_y'], mw_y_t_pi), ([], pulse_spacing),
+                             (['mw_x'], mw_x_t_pi), ([], pulse_spacing),
+                             (['mw_x'], mw_x_t_pi), ([], pulse_spacing),
+                             (['mw_y'], mw_y_t_pi), ([], pulse_spacing),
+                             (['mw_x'], mw_x_t_pi), ([], pulse_spacing),
+                             (['mw_y'], mw_y_t_pi), ([], 0.5 * pulse_spacing),
+                             (['mw_x'], mw_x_t_pi2), (['detect', 'aom'], laser),
+                             ([], decay_init)]
+        sequence += [(['sequence'], 100)]
+        return sequence
+
+    traits_view = View(VGroup(HGroup(Item('submit_button', show_label=False),
+                                     Item('remove_button', show_label=False),
+                                     Item('resubmit_button', show_label=False),
+                                     Item('get_global_vars_button', show_label=False),
+                                     Item('priority'),
+                                     Item('state', style='readonly'),
+                                     Item('run_time', style='readonly', format_str='%.f'),
+                                     Item('stop_time', format_str='%.f'),
+                                     Item('stop_counts'),
+                                     ),
+                              HGroup(Item('filename', springy=True),
+                                     Item('save_button', show_label=False),
+                                     Item('load_button', show_label=False)
+                                     ),
+                              HGroup(Item('test'),
+                                     Item('test_frequency', show_label=True),
+                                     Item('test_power', show_label=True)
+                                     ),
+                              Tabbed(VGroup(HGroup(Item('mw_frequency', width=-80,
+                                                        enabled_when='state != "run"'),
+                                                   Item('mw_power', width=-80,
+                                                        enabled_when='state != "run"'),
+                                                   ),
+                                            HGroup(Item('laser', width=-80,
+                                                        enabled_when='state != "run"'),
+                                                   Item('decay_init', width=-80,
+                                                        enabled_when='state != "run"'),
+                                                   ),
+                                            HGroup(Item('mw_x_t_pi2', width=-80,
+                                                        enabled_when='state != "run"'),
+                                                   Item('mw_x_t_pi', width=-80,
+                                                        enabled_when='state != "run"'),
+                                                   Item('mw_y_t_pi', width=-80,
+                                                        enabled_when='state != "run"')
+                                                   ),
+                                            HGroup(Item('tau_begin', width=-80,
+                                                        enabled_when='state != "run"'),
+                                                   Item('tau_end', width=-80,
+                                                        enabled_when='state != "run"'),
+                                                   Item('tau_delta', width=-80,
+                                                        enabled_when='state != "run"'),
+                                                   Item('pulse_spacing', width=-80,
+                                                        enabled_when='state != "run"'),
+                                                   ),
+                                            label='stimulation'
+                                            ),
+                                     VGroup(HGroup(Item('record_length', width=-80,
+                                                        enabled_when='state != "run"'),
+                                                   Item('bin_width', width=-80,
+                                                        enabled_when='state != "run"'),
+                                                   ),
+                                            label='acquisition'),
+                                     VGroup(HGroup(Item('integration_width'),
+                                                   Item('position_signal'),
+                                                   Item('position_normalize'),
+                                                   ),
+                                            label='analysis'),
+                                     ),
+                              Tabbed(Item('line_plot', show_label=False, width=500, height=-300,
+                                          resizable=True),
+                                     Item('matrix_plot', show_label=False, width=500, height=-300,
+                                          resizable=True),
+                                     Item('pulse_plot', show_label=False, width=500, height=-300,
+                                          resizable=True),
+                                     ),
+                              ),
+                       title='Q-Dyne Measurement',
+                       )
+
+
+if __name__ == '__main__':
+    pass

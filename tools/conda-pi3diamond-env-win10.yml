@@ -1,0 +1,74 @@
+name: pi3diamond
+channels:
+- conda-forge
+- defaults
+dependencies:
+- tk=8.5.19=vc9_1
+- backports=1.0=py27hadcabcf_1
+- backports.shutil_get_terminal_size=1.0.0=py27h0e4e2bd_2
+- bzip2=1.0.6=h8a7aa22_4
+- ca-certificates=2017.08.26=h94faf87_0
+- certifi=2018.1.18=py27_0
+- chaco=4.5.0=np110py27_0
+- colorama=0.3.9=py27hbf2da50_0
+- cycler=0.10.0=py27h0308610_0
+- decorator=4.2.1=py27_0
+- enable=4.5.1=np110py27_0
+- enum34=1.1.6=py27h62011c5_1
+- freetype=2.8=h4353213_1
+- icc_rt=2017.0.4=h97af966_0
+- icu=58.2=hb13015a_1
+- intel-openmp=2018.0.0=hc0023dc_8
+- ipython=5.4.1=py27_2
+- ipython_genutils=0.2.0=py27h520e083_0
+- jpeg=9b=hb117b5b_2
+- kiwisolver=1.0.1=py27h856cc30_0
+- libiconv=1.15=h9278755_7
+- libpng=1.6.34=h325896a_0
+- libtiff=4.0.9=hea7e7e4_0
+- libxml2=2.9.7=h325896a_0
+- libxslt=1.1.32=h89dfad8_0
+- matplotlib=1.5.1=np110py27_0
+- mkl=2018.0.1=h1db664d_4
+- numpy=1.10.1=py27_0
+- olefile=0.45.1=py27_0
+- openssl=1.0.2n=hc64555f_0
+- pathlib2=2.3.0=py27hf47bee7_0
+- pickleshare=0.7.4=py27h00fecd8_0
+- pil=1.1.7=py27_0
+- pillow=4.2.1=py27h34edd1e_0
+- pip=9.0.1=py27_5
+- prompt_toolkit=1.0.15=py27h7daf8c6_0
+- pyface=4.5.2=py27_0
+- pygments=2.2.0=py27h7677ddd_0
+- pyparsing=2.2.0=py27h5861b73_1
+- pyqt=4.10.4=py27_1
+- pyside=1.2.1=py27_0
+- python=2.7.14=hca1081f_23
+- python-dateutil=2.6.1=py27h3c75914_1
+- pytz=2018.3=py27_0
+- qt=5.6.2=vc9he136c73_12
+- scandir=1.7=py27h0c8e037_0
+- scipy=0.16.0=np110py27_0
+- setuptools=38.5.1=py27_0
+- simplegeneric=0.8.1=py27_2
+- six=1.11.0=py27hcc62b61_1
+- sqlite=3.22.0=h8b3e59e_0
+- traitlets=4.3.2=py27h86dab9c_0
+- traits=4.5.0=py27_0
+- traitsui=4.5.1=py27_0
+- vc=9=h7299396_1
+- vs2008_runtime=9.00.30729.1=hfaea7d5_1
+- wcwidth=0.1.7=py27h1a7f114_0
+- wheel=0.30.0=py27hf092909_1
+- win_unicode_console=0.5=py27hc8ca5b4_0
+- wincertstore=0.2=py27h87a2792_0
+- zlib=1.2.11=h9da00b1_2
+- pip:
+  - backports.shutil-get-terminal-size==1.0.0
+  - ipython-genutils==0.2.0
+  - prompt-toolkit==1.0.15
+  - pyvisa==1.9.0
+  - win-unicode-console==0.5
+prefix: C:\Users\diamond_afm\AppData\Local\Continuum\anaconda2\envs\pi3diamond
+

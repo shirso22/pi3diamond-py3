@@ -1,0 +1,70 @@
+# pi3diamond -- Python 3 dependencies
+#
+# These are the versions the ported code was actually executed against, not a
+# guess. All 20 pi3dummy TraitsUI windows built and painted on this set.
+#
+#     pip install -r requirements.txt
+#
+# HW-FIX: Python 3.13. This said 3.12 while the TimeTagger extension
+# was built cp313-win_amd64 -- a cp313 .pyd will NOT load on 3.12, so
+# anyone following this file literally got an unusable environment.
+# Verified on 3.13.x, 64-bit. All pins resolve to cp313 Windows wheels;
+# `enable` has no cp314 wheel, so 3.14 does not work.
+
+# --- numerics -------------------------------------------------------------
+numpy==2.4.4
+scipy==1.17.1
+matplotlib==3.10.8
+
+# --- Enthought Tool Suite -------------------------------------------------
+# The codebase was written against Traits 4 / Chaco 3. It runs on these with
+# six symbol fixes; see PY3_PORT_NOTES.md step 11. Pin them together -- mixing
+# ETS majors is how you end up debugging two migrations at once.
+traits==7.1.0
+traitsui==8.0.0
+pyface==8.0.0
+chaco==6.1.1
+enable==6.1.0
+
+# --- GUI backend ----------------------------------------------------------
+# Qt is the tested path. Set ETS_TOOLKIT=qt to pin it explicitly.
+PyQt5==5.15.11
+
+# Pinned deliberately, not incidentally. Newer Pillow removed PIL.ImageQt,
+# which kiva's qpainter backend still calls; that combination aborts on paint.
+# Did not reproduce on the default agg backend, but do not find out the hard
+# way during a measurement.
+Pillow==12.1.1
+
+# --- instrument I/O -------------------------------------------------------
+# pyvisa >= 1.9 dropped the top-level `visa` module; the port rewrites the
+# imports to `import pyvisa as visa`.
+pyvisa==1.16.2
+pyserial==3.5
+
+# --- build-only -----------------------------------------------------------
+# Needed ONLY to compile the TimeTagger C++ extension (build_timetagger.py).
+# pi3diamond itself never imports it, so leave it out of a runtime-only
+# install.
+#
+# Python 3.12+ stopped seeding setuptools into new venvs, so unlike on older
+# Pythons this will NOT already be present -- build_timetagger.py fails with
+# ModuleNotFoundError until you install it.
+#
+# Left unpinned deliberately: it is a build tool, not something your results
+# depend on, and pinning it just means fighting the resolver later.
+setuptools
+
+# --- optional -------------------------------------------------------------
+# wxPython: needed ONLY by measurements/pulsedAFMclient.py and
+# pulsedAFMclient_old.py, which write raw wx.Panel code. Not part of the
+# tested path. Decide whether you are keeping those two files before you carry
+# a second GUI toolkit for them.
+# wxPython==4.2.2
+#
+# NI-DAQmx: hardware/nidaq.py loads nicaiu.dll via ctypes at import time. Not a
+# pip package -- install the NI driver, and match its bitness to your Python.
+#
+# TimeTagger: hardware/_TimeTagger.pyd is a 32-bit Python 2.7 extension and
+# cannot load under any Python 3. Either rebuild 64-bit from the SWIG sources
+# in timetagger/backend/, or move to Swabian Instruments' current package.

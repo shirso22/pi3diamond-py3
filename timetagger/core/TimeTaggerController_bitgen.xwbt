@@ -1,0 +1,8 @@
+INTSTYLE=ise
+INFILE=R:\software\diamond\timetagger\core\TimeTaggerController.ncd
+OUTFILE=R:\software\diamond\timetagger\core\TimeTaggerController.bit
+FAMILY=Spartan3E
+PART=xc3s1200e-4ft256
+WORKINGDIR=R:\software\diamond\timetagger\core
+LICENSE=WebPack
+USER_INFO=210079001_0_0_835

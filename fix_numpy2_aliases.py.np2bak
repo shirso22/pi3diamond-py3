@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""
+fix_numpy2_aliases.py -- patch NumPy 2.0 removals in an existing tree, in place.
+
+    python fix_numpy2_aliases.py .
+
+Run it from your pi3diamond folder. It edits only .py files and skips
+timetagger/. Originals are kept alongside as *.np2bak the first time.
+
+WHY
+
+This is not a Python 2 -> 3 issue. NumPy 1.x carried np.NaN, np.NAN and
+np.nan as three names for the same object; NumPy 2.0 kept only the lowercase
+one and deleted the rest. The same release dropped np.Inf, np.float_,
+np.product, np.alltrue and friends.
+
+So this code would break identically under Python 2 on NumPy 2 -- the version
+wall just makes that combination impossible. You are doing two migrations at
+once: Python 2 -> 3, and a decade of library evolution underneath it.
+
+WHY IT HID SO WELL
+
+Almost every np.NaN in this codebase sits in an `except` branch:
+
+    try:
+        fit_result = fitting.fit_rabi(self.tau, y, y ** 0.5)
+    except:
+        fit_result = ((np.NaN, np.NaN, np.NaN, np.NaN), ...)
+
+That line only runs when a fit FAILS. Every clean run takes the `try` path, so
+a full pass of the measurement suite never touches it. It surfaces the first
+time a measurement gets parameters that produce a degenerate fit -- and then it
+fails as an AttributeError raised *while handling* another exception, so the
+message you see has nothing to do with the real problem.
+
+Error paths need exercising too.
+"""
+
+import os
+import re
+import shutil
+import sys
+
+SKIP_DIRS = {'timetagger', '__pycache__', '.git', 'venv', 'build'}
+
+# np.nan and np.inf (lowercase) survived and always worked. Everything here
+# was removed in NumPy 2.0, except the scalar-type aliases which went in 1.24.
+PATTERN = re.compile(
+    r'\b(np|numpy)\.(NaN|NAN|Inf|Infinity|infty|NINF|PINF'
+    r'|float_|complex_|unicode_|string_'
+    r'|alltrue|sometrue|cumproduct|product|round_)\b(?![\w.])')
+
+REPLACEMENT = {
+    'NaN': 'nan', 'NAN': 'nan', 'Inf': 'inf', 'Infinity': 'inf',
+    'infty': 'inf', 'NINF': 'inf', 'PINF': 'inf',
+    'float_': 'float64', 'complex_': 'complex128',
+    'unicode_': 'str_', 'string_': 'bytes_',
+    'alltrue': 'all', 'sometrue': 'any', 'cumproduct': 'cumprod',
+    'product': 'prod', 'round_': 'round',
+}
+
+
+def py_files(root):
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        out += [os.path.join(dirpath, f) for f in sorted(filenames)
+                if f.endswith('.py')]
+    return sorted(out)
+
+
+def strip_comments(line):
+    """Crude, but enough to avoid counting hits inside a trailing comment."""
+    return line.split('#', 1)[0]
+
+
+def main(root):
+    if not os.path.isdir(root):
+        print('not a directory: %s' % root)
+        return 2
+
+    total_sites = total_files = 0
+    for path in py_files(root):
+        raw = open(path, 'rb').read().decode('utf-8', 'replace')
+        hits = [m for m in PATTERN.finditer(raw)]
+        if not hits:
+            continue
+
+        # count only the ones that are real code, for the report
+        code_hits = 0
+        for line in raw.split('\n'):
+            code_hits += len(PATTERN.findall(strip_comments(line)))
+
+        new = PATTERN.sub(
+            lambda m: '%s.%s' % (m.group(1), REPLACEMENT[m.group(2)]), raw)
+        if new == raw:
+            continue
+
+        bak = path + '.np2bak'
+        if not os.path.exists(bak):
+            shutil.copy2(path, bak)
+        open(path, 'wb').write(new.encode('utf-8'))
+
+        rel = os.path.relpath(path, root)
+        print('  %-52s %d site(s)%s'
+              % (rel, len(hits),
+                 '' if code_hits == len(hits)
+                 else '  (%d in code, rest in comments)' % code_hits))
+        total_sites += len(hits)
+        total_files += 1
+
+    print('\n%d site(s) in %d file(s). Backups written as *.np2bak.'
+          % (total_sites, total_files))
+    if not total_sites:
+        print('Nothing to do -- this tree is already patched.')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1] if len(sys.argv) > 1 else '.'))

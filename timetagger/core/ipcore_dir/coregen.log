@@ -1,0 +1,19 @@
+CoreGen has not been configured with any user repositories.
+CoreGen has been configured with the following Xilinx repositories:
+ - 'C:\Xilinx\13.2\ISE_DS\ISE\coregen\' [reloaded]
+WARNING:sim - The project IP instance 'OutputBufferSmall' for IP 'Fifo Generator
+   v8.1' was generated with a different version of the IP than is currently in
+   the IP Catalog. It was originally generated using IP with the packaged
+   timestamp '2011-02-03T22:23:32.000Z'; the IP in the current catalog has a
+   different packaged timestamp '2011-06-21T06:40:37.000Z'. This mismatch is due
+   to changes made to the IP in the user repositories. It may affect some
+   functionality of the IP, if there are differences between these two versions
+   of the IP.
+INFO:sim - Generating component instance 'OutputBufferSmall' of
+   'xilinx.com:ip:fifo_generator:8.1' from
+   'C:\Xilinx\13.2\ISE_DS\ISE\coregen\ip\xilinx\primary\com\xilinx\ip\fifo_gener
+   ator_v8_1\component.xml'.
+Applying current project options...
+Finished applying current project options.
+Cancelled executing Tcl generator.
+Wrote CGP file for project 'OutputBufferSmall'.

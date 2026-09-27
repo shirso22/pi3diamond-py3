@@ -1,0 +1,529 @@
+"""
+External clock 0.2-2 Vpp, 1 MHz to 2.7 GHz, duty cycle 50 +- 10 %
+"""
+
+import struct
+
+import numpy as np
+
+from . import dtg_io
+from .socket_instrument import SocketInstrument
+
+
+# HW-FIX: Python 2's round() rounded halves AWAY FROM ZERO; Python 3 rounds
+# them TO EVEN. On a pulse generator that silently changes pulse lengths, and
+# because the caller does `if ticks == 0: continue`, it can drop a pulse
+# entirely.
+#
+#   dt = 2.0 ns (24x4 core):  t=1 -> 0 ticks (py2: 1)  <- PULSE DISAPPEARS
+#                             t=5 -> 2 ticks (py2: 3)
+#                             t=9 -> 4 ticks (py2: 5)
+#   dt = 1.5 ns (12x8 core):  t=0.75 -> 0 (py2: 1),  t=3.75 -> 2 (py2: 3)
+#
+# floor(x + 0.5) reproduces the Python 2 result for positive values, which is
+# all a pulse length ever is.
+def _py2_round(x):
+    """HW-FIX: Python 2 round() semantics. See the note above."""
+    import math
+    return int(math.floor(x + 0.5))
+
+
+
+block_granularity = 4
+min_block_size = 1000  # bytes
+max_block_size = 32000000  # bytes
+
+CLOCK_SOURCES = {'INT': 0, 'EXT_10MHZ': 1, 'EXT_PLL': 2, 'EXT': 3}
+
+
+# ToDo:
+#
+# Check GPIB control
+# 
+# provide finite sub loops by using new sequence syntax
+# check whether it is possible to provide faster switching by using hashes of the converted sequences
+# and just switching between sequences
+
+def gen_mainsequence_step(label, name, repeat, goto):
+    """
+    generate a python tree for a main subsequence step.
+    
+    arguments:
+        label   string, label of the entry
+        name    string, name of the block or subsequence
+        repeat  integer, repeat count, 0 means infinite
+        gata    string, goto entry
+    """
+    assert 0 <= repeat < 65536, "repeat not within allowed range: %i" % repeat
+    label_entry = np.array(label + '\x00', dtype='|S')
+    name_entry = np.array(name + '\x00', dtype='|S')
+    goto_entry = np.array(goto + '\x00', dtype='|S')
+    return [
+        'DTG_MAINSEQUENCE_RECID',
+        51,
+        [
+            ['DTG_LABEL_RECID', label_entry.nbytes, label_entry],
+            ['DTG_WAITTRIGGER_RECID', 2, np.array([0], dtype=np.int16)],
+            ['DTG_SUBNAME_RECID', name_entry.nbytes, name_entry],
+            ['DTG_REPEATCOUNT_RECID', 4, np.array([repeat], dtype=np.int32)],  # was 0,0
+            ['DTG_JUMPTO_RECID', 1, np.array([0], dtype=np.int8)],
+            ['DTG_GOTO_RECID', goto_entry.nbytes, goto_entry]
+        ]
+    ]
+
+
+def gen_subsequence_step(name, repeat):
+    """
+    generate a python tree for a subsequence step.
+    
+    arguments:
+        name    string, name of the block
+        repeat  repeat count
+    """
+    name_entry = np.array(name + '\x00', dtype='|S')
+    return ['DTG_SUBSEQUENCESTEP_RECID',
+            22,
+            [['DTG_SUBNAME_RECID', name_entry.nbytes, name_entry],
+             ['DTG_REPEATCOUNT_RECID', 4, np.array([repeat], dtype=np.int32)]
+             ]
+            ]
+
+
+def gen_subsequence(id, name, sub):
+    """
+    generate a python tree for a subsequence
+    
+    arguments:
+        id    int, id
+        name  string, name
+        sub   list of entries, the subsequence
+    """
+    n = len(sub)
+    assert n <= 256, 'subsequence length %i exceeds the maximum of 256.' % n
+    name_entry = np.array(name + '\x00', dtype='|S')
+    return ['DTG_SUBSEQUENCE_RECID',
+            46,
+            [['DTG_ID_RECID', 2, np.array([id], dtype=np.int16)],
+             ['DTG_NAME_RECID', name_entry.nbytes, name_entry],
+             ] + [gen_subsequence_step(*item) for item in sub]
+            ]
+
+
+def gen_block(id, name, data):
+    """
+    generate a tree for a DTG block
+    
+    arguments:
+        id    int, block id
+        name  string, block name
+        data  np.array(dtype=int8), binary pattern data
+    """
+    n = len(data)
+    assert min_block_size <= n <= max_block_size, 'block size out of range. %i<=%i<=%i' % (
+        min_block_size, n, max_block_size)
+    assert not n % 4, 'block size must be dividable by 4.'
+    length_entry = np.array([data.shape[0]])  # ToDo: check whether this is the correct length
+    name_entry = np.array(name + '\x00', dtype='|S')
+    block = [
+        'DTG_BLOCK_RECID',
+        30,
+        [
+            ['DTG_ID_RECID', 2, np.array([id], dtype=np.int16)],
+            ['DTG_NAME_RECID', name_entry.nbytes, name_entry],
+            ['DTG_SIZE_RECID', length_entry.nbytes, length_entry]
+        ]
+    ]
+
+    pattern = ['DTG_PATTERN_RECID',
+               1,
+               [['DTG_GROUPID_RECID', 2, np.array([0], dtype=np.int16)],
+                ['DTG_BLOCKID_RECID', 2, np.array([id], dtype=np.int16)],
+                ['DTG_PATTERNDATA_RECID',
+                 1,
+                 data]
+                ]]
+
+    return block, pattern
+
+
+def insert_into_tree(tree, main, subs, blocks):
+    """
+    Insert pattern data into an initial DTG tree
+    that contains all required configuration data
+    but no pattern data yet.
+    
+    arguments:
+        tree    list, initial DTG tree
+        main    list, main sequence
+        subs    dict, subsequences
+        blocks  dict, blocks
+    """
+    n = len(main)
+    assert n <= 8000, 'main sequence length %i exceeds the maximum of 8000.' % n
+
+    n = len(subs)
+    assert n < 50, 'The number of subsequences %i exceeds the maximum of 50.' % n
+
+    # construct a DTG tree by appending binary_pattern to the scaffold tree. 
+    branch = tree[-1][-1]
+    view = branch.pop()
+
+    # main sequence
+    for label, name, rep, goto in main:
+        node = gen_mainsequence_step(label, name, rep, goto)
+        branch.append(node)
+
+    # subsequences
+    id = 0
+    for name, sub in sorted(subs.items()):
+        node = gen_subsequence(id, name, sub)
+        branch.append(node)
+        id += 1
+
+    # blocks
+    # id = 0
+    for name, data in sorted(blocks.items()):
+        header, data = gen_block(id, name, data)
+        branch.append(header)
+        branch.append(data)
+        id += 1
+
+    #     main = subs['main']
+    #
+    #     if len(main) == 1:
+    #         name, rep = main[0]
+    #         node = gen_mainsequence_step('START', name, rep, 'START')
+    #         branch.append(node)
+    #     else:
+    #         name, rep = main[0]
+    #         node = gen_mainsequence_step('START', name, rep, '')
+    #         branch.append(node)
+    #
+    #         for name, rep in main[1:-1]:
+    #             node = gen_mainsequence_step('', name, rep, '')
+    #             branch.append(node)
+    #
+    #         name, rep = main[-1]
+    #         node = gen_mainsequence_step('', name, rep, 'START')
+    #         branch.append(node)
+
+    branch.append(view)
+
+    tree = dtg_io.recalculate_space(tree)[1]
+
+
+class DTG():
+    """Provide control of a Tektronix DTG."""
+
+    def __init__(self,
+                 visa_device='192.168.1.32:4003',
+                 channel_map={'ch0': 0, 'ch1': 1, 'ch2': 2, 'ch4': 4, 'ch5': 5, 'ch6': 6, 'ch7': 7, 'ch8': 8},
+                 path_to_scaffold='scaffold.dtg',
+                 path_on_this_pc='Z:\\setup.dtg',
+                 path_on_dtg='C:\\pulsefiles\\setup.dtg'
+                 ):
+        self.visa_device = visa_device
+        self.channel_map = channel_map
+        self.path_to_scaffold = path_to_scaffold
+        self.path_on_this_pc = path_on_this_pc
+        self.path_on_dtg = path_on_dtg
+        self.set_clock()
+        self.instr = SocketInstrument(visa_device)
+
+    # currently GPIB is broken, but who needs it?
+    #        if '::' in visa_device:
+    #            self._connect_gpib(visa_device)
+    #        else:
+    #            self._connect_lan(visa_device)
+    #
+    #    def _connect_gpib(self, device):
+    #        """Open a GPIB connection to the DTG"""
+    #        from visa import instrument
+    #        self.instr=instrument(device)
+    #
+    #    def _connect_lan(self, device):
+    #        """Open a raw socket connection to the DTG"""
+    #        from socket_instrument import SocketInstrument
+    #        self.instr=SocketInstrument(device)
+
+    def channels_to_int(self, channels):
+        bits = 0
+        for channel in channels:
+            bits |= 1 << self.channel_map[channel]
+        return bits
+
+    def sequence_to_dtg_data(self, sequence, repeat=np.inf, pad=[]):
+        """
+        Converts a python pulse sequence (list of pulses) into
+        python data structures representing the DTG data (main
+        sequence, subsequences, blocks).
+        
+        arguments:
+            sequence    list of 2-tuples representing the
+                        pulse sequence
+            repeat      number, defaults to Inf. How often
+                        the main sequence shall be repeated
+                        if 0 or Inf, repeat indefinitely
+            pad         list of channel names, defaults to [].
+                        Specifies which channels should be high
+                        in the dead time at the end of the sequence. 
+        
+        returns:
+            main    list of 4-tuples of strings representing
+                    the main sequence analog to the DTG format
+            subs    dictionary containing items of the form
+                    'name':[...] representing the subsequences
+            blocks  dictionary containing items of the form
+                    'name':np.array((...), dtype=int8)
+                    representing the blocks
+        """
+        if repeat == np.inf:
+            repeat = 0
+        # main sequence
+        main = []
+        # we will use a single subsequence called 'sub'
+        subs = {}
+        # we use a dictionary to describe a pool of blocks that are identified by their ids
+        blocks = {}
+        # the main sequence is repeated loops times
+        dt = float(self.dt)
+        # current index in the block
+        i = 0
+        # end of the block. We will deliberately reset and increase this number if necessary,
+        # according to the minimum block size and granularity
+        n = 0
+        # running block id used for the non-constant blocks
+        k = 0
+        # working memory to hold the block that we are currently building up
+        pattern = np.empty((max_block_size,), dtype=np.int8)
+        for channels, length in sequence:
+            mask = self.channels_to_int(channels)
+            ticks = _py2_round(length / dt)  # HW-FIX: see _py2_round
+            # print 'mask', mask, 'ticks', ticks
+            # check whether it is worthwhile to split up the pulse.
+            # 'fill' is the number of ticks required to complete the current block,
+            # accounting for granularity and minimum block size
+            fill = n - i
+            # check whether it is useful to introduce a repeat block 
+            # HW-FIX: was `/`. rep becomes the repeat count and is
+            # written via np.array([rep], dtype=np.int32), which
+            # truncates silently -- 2.5 blocks of 1000 ticks is
+            # programmed as 2, shortening the pulse by 500 ticks with
+            # no error anywhere. `if rep > 0` was also true for
+            # fractional values that used to floor to zero.
+            rep = (ticks - fill) // 1000
+            if rep > 0:  # the case ticks < fill is also covered, since in this case rep will be negative
+                if fill > 0:  # fill up the current block
+                    pattern[i:n] = mask
+                    ticks -= fill
+                # finish the current block
+                if i > 0:
+                    block_name = 'SEQ%05i' % k
+                    blocks[block_name] = pattern[:n].copy()
+                    main.append(['', block_name, 1, ''])
+                    i = 0
+                    n = 0
+                    k += 1
+                # create repeat block for the current mask and dump it to the block pool
+                block_name = 'REP%03i' % mask
+                if not block_name in blocks:
+                    blocks[block_name] = mask * np.ones((1000,), dtype=np.int8)
+                # append repeat block with repeat to sequence
+                main.append(['', block_name, rep, ''])
+                ticks -= rep * 1000
+            # write remaining ticks
+            if ticks > 0:
+                pattern[i:i + ticks] = mask
+                i += ticks
+                if i > n:  # adjust block end
+                    n = max(i, 1000)
+                    n += (4 - (n - 1000) % 4) % 4  # increase if necessary to account for granularity of 4
+        fill = n - i
+        if fill > 0:  # append zeros to last block
+            fill_mask = self.channels_to_int(pad)
+            pattern[i:n] = fill_mask
+        if i > 0:  # write current block
+            block_name = 'SEQ%05i' % k
+            blocks[block_name] = pattern[:n].copy()
+            main.append(['', block_name, 1, ''])
+
+        main[0][0] = 'START'
+        main[-1][3] = 'START'
+
+        #        i = 0
+        #        n = len(main)
+        #        while n > 8000: # split into subsequences
+        #            sub = [ [item[1], item[2]] for item in main[i+1:i+257]]
+        #            del main[i+1:i+257]
+        #            subname = 'sub%03i'%i
+        #            main.insert(i+1,['',subname,1,''])
+        #            subs[subname] = sub
+        #            n = len(main)
+        #            i+=1
+
+        return main, subs, blocks
+
+    def run_dtg_data(self, seq, subs, blocks):
+        self.instr.write('TBAS:RUN OFF')
+        self.instr.write('OUTP:STAT:ALL OFF')
+        self.instr.ask('*OPC?', timeout=60)
+
+        # load bare tree
+        tree = dtg_io.load_scaffold(self.path_to_scaffold)
+
+        # insert pattern data into bare tree
+        insert_into_tree(tree, seq, subs, blocks)
+
+        # set the clock
+        leaf = dtg_io.get_leaf(tree, 'DTG_TB_CLOCKSOURCE_RECID')
+        leaf[2][0] = CLOCK_SOURCES[self.clock_source]
+        leaf = dtg_io.get_leaf(tree, 'DTG_TB_CLOCK_RECID')
+        leaf[2][:] = struct.unpack('<4h', struct.pack('<d', self.clock_freq))
+
+        # write this file onto the DTG (via Samba)
+        fil = open(self.path_on_this_pc, 'wb')
+        dtg_io.dump_tree(tree, fil)
+        fil.close()
+
+        # load and execute the generated setup file
+        self.instr.write('MMEM:LOAD "' + self.path_on_dtg + '"')
+        self.instr.ask('*OPC?', timeout=600)
+        self.instr.write('OUTP:STAT:ALL ON')
+        opc = int(self.instr.ask('*OPC?', timeout=60))
+        self.instr.write('TBAS:RUN ON')
+        opc = int(self.instr.ask('*OPC?', timeout=60))
+        #        start_time = time.time()
+        #        while not int(self.instr.ask('TBAS:RUN?')) and time.time()-start_time<60:
+        #            time.sleep(0.1)
+        return int(self.instr.ask('TBAS:RUN?'))
+        # debugging
+        # return seq, subs, blocks
+
+    def Sequence(self, sequence, repeat=np.inf, pad=[]):
+        seq, subs, blocks = self.sequence_to_dtg_data(sequence, repeat=repeat, pad=pad)
+        return self.run_dtg_data(seq, subs, blocks)
+
+    def set_clock(self, source='INT', freq=1e9):
+        self.clock_source = source
+        self.clock_freq = freq
+        self.dt = 1e9 / freq
+
+    def Off(self):
+        self.instr.write('OUTP:STAT:ALL OFF')
+        opc = int(self.instr.ask('*OPC?', timeout=600))
+
+    def On(self):
+        self.instr.write('OUTP:STAT:ALL ON')
+        opc = int(self.instr.ask('*OPC?', timeout=600))
+
+    def Light(self):
+        self.Sequence([(['laser'], 1000), ], pad=['laser'])
+
+    def Night(self):
+        self.Off()
+        # self.Sequence( [  ([],  1000), ] )
+
+    def Open(self):
+        self.Sequence([(['switch', 'laser', 'microwave'], 1000), ], pad=['switch', 'laser', 'microwave'])
+
+    def High(self, chans):  # chans: sequence of channel id strings, like ['laser', 'mw']
+        self.Sequence([(chans, 1000), ])
+
+
+if __name__ == '__main__':
+
+    def sequence_simplify(sequence):
+        """Merge adjacent pulses that have equal channels"""
+        i = 0
+        current = sequence[i]
+        end = len(sequence)
+        while i + 1 < end:
+            next = sequence[i + 1]
+            if current[0] == next[0]:  # merge next into the current one, pop next, and decrease length
+                sequence[i] = (current[0], current[1] + next[1])
+                sequence.pop(i + 1)
+                end -= 1
+            else:  # move one to the right
+                i += 1
+                current = next
+        return sequence
+
+
+    def sequence_remove_zeros(sequence):
+        """remove all pulses with zero length from a sequence"""
+        return [x for x in sequence if x[1] != 0.0]
+
+
+    dtg = DTG(visa_device='192.168.1.32:4003',
+              # channel_map={'laser':0, 'sync':1, 'x':2, 'y':3},
+              channel_map={'detect': 0, 'aom': 0, 'sequence': 1, 'microwave': 2, 'mw_x': 2, 'mw_y': 3},
+              path_to_scaffold='scaffold.dtg',
+              path_on_this_pc='Z:\\setup.dtg'
+              )
+
+    laser = 3000
+    wait = 1000
+
+    tau = np.arange(30., 3000., 30.)
+    #    tau = np.arange(3.,300.,3.)
+
+    sequence = []
+    # sequence = [ (['aom'],laser) ]
+    for t in tau:
+        sequence += [([], wait), (['mw_x'], t), (['detect', 'aom'], laser)]
+    sequence += [(['sequence'], 100)]
+
+    # dtg.Light()
+
+    #    laser=3000
+    #    wait=1000
+    #    pi2_x = 5
+    #    pi2_y = 5
+    #    pi_x = 10
+    #    pi_y = 10
+    #
+    #    tau = np.arange(10000., 50000., 10000.)
+    #
+    #    n=32
+    #
+    #    sequence = []
+    #    for t in tau:
+    #        dt = t/float(2*n)
+    #        sequence +=       [ (['x'],pi2_x) ]
+    #        sequence += n/8 * [
+    #                            ([],dt),
+    #                            (['y'],pi_y),
+    #                            ([],2*dt),
+    #                            (['x'],pi_x),
+    #                            ([],2*dt),
+    #                            (['y'],pi_y),
+    #                            ([],2*dt),
+    #                            (['x'],pi_x),
+    #                            ([],2*dt),
+    #                            (['x'],pi_x),
+    #                            ([],2*dt),
+    #                            (['y'],pi_y),
+    #                            ([],2*dt),
+    #                            (['x'],pi_x),
+    #                            ([],2*dt),
+    #                            (['y'],pi_y),
+    #                            ([],dt),
+    #                          ]
+    #        sequence +=       [ (['x'],pi2_x) ]
+    #        sequence +=       [ ([],wait) ]
+    #        sequence +=       [ (['laser'],laser),  ([],wait) ]
+    #    sequence +=       [ (['sync'],100) ]
+    #    sequence = sequence_remove_zeros(sequence)
+    #    sequence = sequence_simplify(sequence)
+    #
+    #    from microwave_sources import SMBV100AIQ
+    #    microwave = SMBV100AIQ(visa_address='TCPIP::192.168.1.8::INSTR')
+
+    dtg.set_clock('INT', 1.0e9)
+    # dtg.set_clock('EXT', 2.5e9)
+    seq, subs, blocks = dtg.Sequence(sequence, pad=[])
+    # seq, subs, blocks = dtg.Sequence(sequence, pad=['ch1'])
+
+    # dtg.Sequence(sequence)
+    # dtg.Sequence([(['laser'],1000),(['mw'],1000)])
+    # seq, blocks = dtg.gen_pattern([(['laser'],1000),(['mw'],1000)])

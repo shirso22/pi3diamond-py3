@@ -1,0 +1,254 @@
+/*
+    backend for TimeTagger, an OpalKelly based single photon counting library
+    Copyright (C) 2011  Markus Wick <wickmarkus@web.de>
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with this program; if not, write to the Free Software Foundation, Inc.,
+    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+#include <boost/thread.hpp>
+
+#include <fstream>
+#include <iostream>
+#include <list>
+
+#include "TimeTagger.h"
+
+using namespace std;
+
+struct _PulsedAFMEdge {
+	long long edge;
+	int pulse;
+};
+
+class PulsedAFM : public _Iterator {
+public:
+	PulsedAFM(int _length, long long _binwidth, int _sequence_length, int _channel, int _pixel_count=256, 
+		int _line_count=256, int _win_low=300, int _win_high=400, int _refwin_low=800, int _refwin_high=900, int _shot_trigger=-1, int _sequence_trigger=-1, int _pixel_trigger=-1, int _line_trigger=-1) {
+		channel = _channel;
+
+		shot_trigger = _shot_trigger;
+		sequence_trigger = _sequence_trigger;
+		pixel_trigger = _pixel_trigger;
+		line_trigger = _line_trigger;
+
+		sequence_length = _sequence_length;
+
+		length = _length;
+		binwidth = _binwidth;
+		pixel_count = _pixel_count;
+		line_count = _line_count;
+
+		datalength = pixel_count*line_count*sequence_length*length;
+
+		win_low = _win_low;
+		win_high = _win_high;
+		refwin_low = _refwin_low;
+		refwin_high = _refwin_high;
+
+		if(channel>=0)
+			registerChannel(channel);
+		if(shot_trigger>=0)
+			registerChannel(shot_trigger);
+		if(sequence_trigger>=0)
+			registerChannel(sequence_trigger);
+		if(pixel_trigger>=0)
+			registerChannel(pixel_trigger);
+		if(line_trigger>=0)
+			registerChannel(line_trigger);
+
+		cout << "vor new int" << endl;
+		data = new int[datalength];
+		if(!data)
+			cout << "Warning: Konnte Speicher nicht allocieren" << endl;
+
+		clear();
+
+		start();
+	}
+
+	virtual ~PulsedAFM() {
+		stop();
+		if(data)
+			delete [] data;
+	}
+	
+	virtual void start() {
+		lock();
+		waiting_for_sync = (sequence_trigger>=0) ? 1 : 0;
+		pulse = -1;
+		unlock();
+		_Iterator::start();
+	}
+
+	void getData(int **ARGOUTVIEWM_ARRAY3, int *DIM1, int *DIM2, int *DIM3) {
+		if(!data) {ARGOUTVIEWM_ARRAY3 = 0; DIM1 = 0; DIM2 = 0; DIM3 = 0; return;}
+
+		int *arr = new int[sequence_length*pixel_count*line_count];
+		if(!arr) {
+			ARGOUTVIEWM_ARRAY3 = 0; DIM1 = 0; DIM2 = 0; DIM3 = 0;
+			cout << "Warning: Konnte Speicher nicht allocieren für arr" << endl;
+			return;}
+
+		for (int i=0; i<sequence_length*pixel_count*line_count; i++){
+			arr[i]=0;
+		}
+
+		lock();
+		int i=0;
+		for ( int iy=0; iy<line_count; iy++) {
+			for ( int ix=0; ix<pixel_count; ix++){
+				for ( int j=0; j<sequence_length; j++){
+					float win=0.0;
+					float refwin=0.0;
+					for ( int k=0; k<length; k++){
+						
+						//arr[i]+=data[iy*pixel_count*length*sequence_length+ix*length*sequence_length+j*length+k];
+						if ( k >= win_low && k < win_high){
+							win+=data[iy*pixel_count*length*sequence_length+ix*length*sequence_length+j*length+k];
+						}
+						if ( k >= refwin_low && k < refwin_high){
+							refwin+=data[iy*pixel_count*length*sequence_length+ix*length*sequence_length+j*length+k];
+						}
+						
+					}
+					if (win!=0.0 && refwin!=0.0){
+						arr[i]=int(1000000*(win*(refwin_high-refwin_low)/(refwin*(win_high-win_low)))); // multiplied by 1000000 to be able to use integer
+					}
+					i++;
+				}
+			}
+		}
+
+		*ARGOUTVIEWM_ARRAY3 = arr;
+		*DIM1 = line_count;
+		*DIM2 = pixel_count;
+		*DIM3 = sequence_length;
+		
+		unlock();
+	}
+
+	int getCounts() {
+		return counts;
+	}
+
+	virtual void clear() {
+		cout << "clearing data" << endl;
+		lock();
+		for(int i=0; i<pixel_count*line_count*length*sequence_length; i++) {
+			data[i] = 0;
+		}
+		waiting_for_sync = (sequence_trigger>=0) ? 1 : 0;
+		pulse = -1;
+		counts = 0;
+		x = 0;
+		y = 0;
+
+		edge.clear();
+
+		unlock();
+	}
+protected:
+
+	virtual void next(Tag* list, int count, long long time) {
+		for(int i = 0; i < count; i++) {
+			Tag t = list[i];
+
+			// on overflow
+			if(t.overflow) {
+				pulse = -1;
+				waiting_for_sync = (sequence_trigger>=0) ? 1 : 0;
+				edge.clear();
+			}
+
+			// pixel and line trigger handling
+			if(t.chan == line_trigger){
+				waiting_for_sync = (sequence_trigger>=0) ? 1 : 0;
+				if(y<line_count-1){
+					y++;
+					x=0;
+				}
+				cout << "line triggered" << endl;
+			}
+
+			if(t.chan == pixel_trigger){
+				waiting_for_sync = (sequence_trigger>=0) ? 1 : 0;
+				if(x<pixel_count-1) x++;
+				// cout << "pixel triggered" << endl;
+			}
+
+			// on sync
+			if(t.chan == sequence_trigger) {
+				pulse = -1;
+				waiting_for_sync = 0;
+				counts++;
+			}
+
+			// on laser, increase pulse and set edge
+			if(t.chan == shot_trigger && !waiting_for_sync && x>=0) {
+				pulse++;
+				
+				if(pulse >= sequence_length) {
+					if(sequence_trigger>=0) {
+						waiting_for_sync = 1;
+					} else {
+						pulse = 0;
+						counts++;
+					}
+				}
+				if(pulse < sequence_length && pulse >= 0) {
+					_PulsedAFMEdge e;
+					e.edge = t.time;
+					e.pulse = pulse;
+					assert(pulse >= 0 && pulse < sequence_length);
+					edge.push_back(e);
+				}
+				if(!edge.empty() && t.time - edge.front().edge > length*binwidth)
+					edge.pop_front();
+			}
+
+			// on photon in histogram range
+			if(t.chan == channel && !waiting_for_sync) {
+				std::list<_PulsedAFMEdge>::iterator it;
+				for(it = edge.begin(); it != edge.end(); it++) {
+					if( (t.time - (it->edge))/binwidth < length && (t.time - (it->edge))/binwidth >= 0) {
+						assert(it->pulse < sequence_length);
+						assert(it->pulse >= 0);
+
+						assert(it->pulse*length + (t.time-(it->edge))/binwidth < sequence_length*length);
+						assert(it->pulse*length + (t.time-(it->edge))/binwidth >= 0);
+						// direkt hier sortieren
+						data[y*pixel_count*length*sequence_length + x*length*sequence_length + it->pulse*length + (t.time-(it->edge))/binwidth]++;
+					}
+				}
+			}
+		}
+	}
+private:
+	int channel;
+	int length, sequence_length, pixel_count, line_count;
+	long long binwidth;
+	int shot_trigger, sequence_trigger, pixel_trigger, line_trigger;
+
+	int win_low, win_high, refwin_low, refwin_high;
+	int x,y;
+
+	int *data;
+	int datalength;
+
+	std::list<_PulsedAFMEdge> edge;
+
+	bool waiting_for_sync;
+	int pulse, counts;
+
+};

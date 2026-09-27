@@ -1,0 +1,191 @@
+/*
+    backend for TimeTagger, an OpalKelly based single photon counting library
+    Copyright (C) 2011  Markus Wick <wickmarkus@web.de>
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License along
+    with this program; if not, write to the Free Software Foundation, Inc.,
+    51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+*/
+#include <boost/thread.hpp>
+
+#include <fstream>
+#include <iostream>
+#include <list>
+
+#include "TimeTagger.h"
+
+using namespace std;
+
+struct _PulsedEdge {
+	long long edge;
+	int pulse;
+};
+
+class Pulsed : public _Iterator {
+public:
+	Pulsed(int _length, long long _binwidth, int _sequence_length, int _channel_0,
+		   int _channel_1, int _shot_trigger=-1, int _sequence_trigger=-1) {
+		channel_0 = _channel_0;
+		channel_1 = _channel_1;
+		shot_trigger = _shot_trigger;
+		sequence_trigger = _sequence_trigger;
+		sequence_length = _sequence_length;
+
+		length = _length;
+		binwidth = _binwidth;
+
+		if(channel_0>=0)
+			registerChannel(channel_0);
+		if(channel_1>=0)
+			registerChannel(channel_1);
+		if(shot_trigger>=0)
+			registerChannel(shot_trigger);
+		if(sequence_trigger>=0)
+			registerChannel(sequence_trigger);
+
+		data = new int[length*sequence_length];
+		if(!data)
+			cout << "Warning: Konnte Speicher nicht allocieren" << endl;
+
+		clear();
+
+		start();
+	}
+
+	virtual ~Pulsed() {
+		stop();
+		if(data)
+			delete [] data;
+	}
+	
+	virtual void start() {
+		lock();
+		waiting_for_sync = (sequence_trigger>=0) ? 1 : 0;
+		pulse = -1;
+		unlock();
+		_Iterator::start();
+	}
+
+	void getData(int **ARGOUTVIEWM_ARRAY2, int *DIM1, int *DIM2) {
+		if(!data) {ARGOUTVIEWM_ARRAY2 = 0; DIM1 = 0; DIM2 = 0; return;}
+
+		int *arr = new int[length*sequence_length];
+		if(!arr) {ARGOUTVIEWM_ARRAY2 = 0; DIM1 = 0; DIM2 = 0; return;}
+
+		lock();
+
+		for ( int i=0; i<length*sequence_length; i++) {
+			arr[i] = data[i];
+		}
+
+		*ARGOUTVIEWM_ARRAY2 = arr;
+		*DIM1 = sequence_length;
+		*DIM2 = length;
+		unlock();
+	}
+
+	int getCounts() {
+		return counts;
+	}
+
+
+	virtual void clear() {
+		lock();
+
+		for(int i=0; i<length*sequence_length; i++) {
+			data[i] = 0;
+		}
+
+		waiting_for_sync = (sequence_trigger>=0) ? 1 : 0;
+		pulse = -1;
+		counts = 0;
+
+		edge.clear();
+
+		unlock();
+	}
+protected:
+
+	virtual void next(Tag* list, int count, long long time) {
+		for(int i = 0; i < count; i++) {
+			Tag t = list[i];
+
+			// on overflow
+			if(t.overflow) {
+				pulse = -1;
+				waiting_for_sync = (sequence_trigger>=0) ? 1 : 0;
+				edge.clear();
+			}
+
+			// on sync
+			if(t.chan == sequence_trigger) {
+				pulse = -1;
+				waiting_for_sync = 0;
+				counts++;
+			}
+
+			// on laser, increase pulse and set edge
+			if(t.chan == shot_trigger && !waiting_for_sync) {
+				pulse++;
+
+				if(pulse >= sequence_length) {
+					if(sequence_trigger>=0) {
+						waiting_for_sync = 1;
+					} else {
+						pulse = 0;
+						counts++;
+					}
+				}
+				if(pulse < sequence_length && pulse >= 0) {
+					_PulsedEdge e;
+					e.edge = t.time;
+					e.pulse = pulse;
+					assert(pulse >= 0 && pulse < sequence_length);
+					edge.push_back(e);
+				}
+				if(!edge.empty() && t.time - edge.front().edge > length*binwidth)
+					edge.pop_front();
+			}
+
+			// on photon in histogram range
+			if((t.chan == channel_0 || t.chan == channel_1) && !waiting_for_sync) {
+				std::list<_PulsedEdge>::iterator it;
+				for(it = edge.begin(); it != edge.end(); it++) {
+					if( (t.time - (it->edge))/binwidth < length && (t.time - (it->edge))/binwidth >= 0) {
+						assert(it->pulse < sequence_length);
+						assert(it->pulse >= 0);
+
+						assert(it->pulse*length + (t.time-(it->edge))/binwidth < sequence_length*length);
+						assert(it->pulse*length + (t.time-(it->edge))/binwidth >= 0);
+
+						data[it->pulse*length + (t.time-(it->edge))/binwidth]++;
+					}
+				}
+			}
+		}
+	}
+private:
+	int channel_0;
+	int channel_1;
+	int length, sequence_length;
+	long long binwidth;
+	int shot_trigger, sequence_trigger;
+
+	int *data;
+
+	std::list<_PulsedEdge> edge;
+
+	bool waiting_for_sync;
+	int pulse, counts;
+
+};

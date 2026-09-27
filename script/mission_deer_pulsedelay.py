@@ -1,0 +1,88 @@
+# PY3-PORT: threading camelCase aliases (currentThread, isSet,
+# setDaemon, ...) were deprecated in Python 3.10 and REMOVED in 3.13.
+# Rewritten to the snake_case names, which have worked since 2.6.
+"""
+There are several distinct ways to go through different NVs and perform
+certain measurement tasks. 
+
+1. using the queue and 'SwitchTarget' and 'SaveJob' and 'SetJob'
+
+  For each task, create a job and submit it to the queue.
+  Provide a 'special' job for switching the NV. I.e., a queue might
+  look like this: [ ODMR, Rabi, SwitchTarget, ODMR, Rabi, SwitchTarget, ...]
+
+  pro: - very simple
+       - a different set of Jobs can be submitted for individual NVs
+       - every part of the 'code' is basically tested separately (uses only
+         existing jobs) --> very low chance for errors
+       - queue can be modified by user on run time, e.g., if an error in the tasks
+         is discovered, it can be corrected
+       - the submitted jobs can be run with lower priority than all the usual
+         jobs, i.e., the queue can be kept during daily business and will
+         automatically resume during any free time
+         
+  con: - no complicated decision making on how subsequent tasks are executed,
+         e.g., no possibility to do first a coarse ESR, then decide in which range
+         to do a finer ESR, etc. 
+       - it is easy to forget save jobs. If everything goes well this is not a problem,
+         because the jobs can be saved later at any time, but if there is a crash,
+         unsaved jobs are lost
+
+2. using an independent MissionControl job that is not managed by the JobManager
+
+  Write a new job, that is not managed by the JobManager, i.e., that runs independently
+  of the queue. This Job will submit jobs to the queue as needed.
+  
+  pro: - allows complex ways to submit jobs, e.g., depending on the result of previous
+         measurement, with analysis performed in between, etc.
+
+  con: - cannot be changed after started
+       - control job will often be 'new code' and thus may have errors. It is
+         difficult to test --> error prone
+"""
+
+import threading
+import time
+
+import numpy as np
+
+from tools.emod import Job
+
+
+# ToDo: maybe introduce lock for 'state' variable on each job?
+
+class ForAllNvsDD(Job):
+    contrast = list()
+    pulse_delays = list()
+
+    def _run(self):
+
+        try:
+            self.state = 'run'
+
+            # for each pulse delay, measure the deer contrast:
+            neg_delay = -1. * np.linspace(12.0, 892.0, 45)
+            pos_delay = np.linspace(12.0, 892, 45)
+            self.pulse_delays = np.append(neg_delay, pos_delay)
+            for delay in self.pulse_delays:
+                deer_sigref.rf_pulse_delay = delay
+                deer_sigref.submit()
+                while deer_sigref.state != 'done':
+                    threading.current_thread().stop_request.wait(1.0)
+                    if threading.current_thread().stop_request.is_set():
+                        break
+                time.sleep(1.0)
+                deer_sigref.save('Z:\\data\\20151207\\NP1_Pirhana_RT\\NV5C11\\pulse_delay'
+                                 '\\NV5C11_DEER_rfDelay=' + str(delay) + 'ns.pys')
+                time.sleep(1.0)
+                self.contrast.append(deer_sigref.spin_state)
+                time.sleep(1.0)
+            self.state = 'done'
+        finally:
+            self.state = 'error'
+
+
+if __name__ == '__main__':
+    mission_deer_pulsedelay = ForAllNvsDD()
+
+    # mission.start()
