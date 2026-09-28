@@ -1,0 +1,26 @@
+pi3diamond run manual - Shirso
+
+Do this in your Command Prompt
+
+First, navigate to your pi3diamond directory, then:
+
+py -3.13 -m venv venv (The version can be something other than 3.13 too, 3.13 is the latest Python, select as appropriate, the last venv is the folder name for this virtual environment, set it whatever you want. This will create a folder called venv in your root)
+venv\Scripts\activate (Launches the venv)
+pip install -r requirements.txt
+set ETS_TOOLKIT=qt (Visualization tools set appropriately)
+
+Now you can try running pi3dummy, etc and see what happens
+
+Initial audits before starting pi3diamond.py
+
+python -c "import sys; print(sys.version)"
+python -c "from hardware import _TimeTagger; print(_TimeTagger.__file__)"
+dir hardware\_TimeTagger*
+python seq_regression.py compare seq_py3.pkl
+python ok_probe.py
+
+Can set autodetect_resources in pi3diamond to False for safety while testing
+
+For orange laser
+
+python -c "import hardware.huebner_orange_laser, measurements.charge_state; print('orange laser modules import')" (This may complain if pyserial not installed in the venv, just pip install it in the venv in that case)
